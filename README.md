@@ -2,7 +2,7 @@
 
 NHN Cloud 위에 직접 구축한 쿠버네티스 클러스터에서, 상품 이미지 등록 파이프라인을 통해 GitOps 배포와 장애 자동 복구를 검증하는 프로젝트
 
-> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE_v0.1.0.md](./ARCHITECTURE_v0.1.0.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
+> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE_v0.1.1.md](./ARCHITECTURE_v0.1.1.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
 
 ## 리포지토리 구조
 
@@ -21,8 +21,13 @@ NHN Cloud 위에 직접 구축한 쿠버네티스 클러스터에서, 상품 이
 ## 로컬 실행 (docker-compose)
 
 ```
+cp .env.example .env   # 최초 1회, 자격증명은 로컬 개발용 더미 값
 docker compose up --build
 ```
+
+`docker-compose.yml`은 자격증명을 직접 담지 않고 `.env`에서 `${VAR}`로 값을 가져옵니다.
+`.env`는 `.gitignore`에 등록되어 git에 커밋되지 않으며, 어떤 변수가 필요한지는
+[`.env.example`](./.env.example)에 정리되어 있습니다.
 
 - Product Service: http://localhost:8000
 - Web UI: http://localhost:8080
@@ -100,6 +105,41 @@ Postgres 테이블만 `TRUNCATE ... RESTART IDENTITY`하고 Redis 캐시·MinIO�
   (`GET /products`) 기존과 동일하게 `active` 상품만 반환하고 Redis 캐시도 그대로 사용합니다
   (스펙 4번 항목 요구사항에 영향 없음).
 
+### Image Processing Service 헬스 체크 (스펙 대비 추가)
+
+스펙 7번 항목의 `GET /health`는 Product Service 전용으로 명시되어 있고, Image Processing
+Service는 HTTP 서버 없이 순수 RabbitMQ 컨슈머 루프로만 동작합니다. 그래서 K8s
+Liveness/Readiness Probe에 쓸 HTTP 엔드포인트가 애초에 없는데, 향후 실제 K8s 배포 단계에서
+연결 상태를 확인할 수단이 필요해 파일 기반 heartbeat를 추가했습니다.
+
+- `queue_consumer.py`의 `connect_with_retry()`가 RabbitMQ 연결에 성공하는 즉시, 그리고
+  consumer 루프가 살아있는 동안(메시지 처리 시마다 + 유휴 상태에서도 30초 주기로)
+  `RABBITMQ_HEALTH_FILE`(기본값 `/tmp/healthy`)을 touch합니다.
+- 연결이 끊겨 재시도만 반복 중일 때는 이 파일이 갱신되지 않으므로, K8s `exec` probe에서
+  `find /tmp/healthy -mmin -1` 같은 명령으로 mtime 신선도를 확인하면 연결 상태를 판단할 수
+  있습니다 (아직 매니페스트 자체는 범위 밖 — 배포 단계에서 추가 예정).
+
+### Image Processing Service RabbitMQ 런타임 재연결
+
+스펙 9번 항목은 "DB/Redis/RabbitMQ 연결 재시도는 기동 시점뿐 아니라 실행 중에도 적용되어야
+한다"고 명시합니다. 기존 구현은 시작 시 `connect_with_retry()`로 최초 연결만 재시도했고,
+컨슘 도중 연결이 끊기면 예외가 그대로 전파되어 프로세스가 죽는 구조였습니다(재시작은
+K8s가 대신 해주지만, "실행 중 끊김 → 재연결"이라는 스펙 의도와는 달랐습니다).
+
+`image-processing-service/main.py`의 `main()`을 아래처럼 바꿔 이 요구사항을 충족시켰습니다.
+
+- `connect_with_retry()` 호출 + `run_consumer()` 실행을 `while not shutdown_requested:`
+  루프로 감쌌습니다.
+- `run_consumer()`가 RabbitMQ 연결 관련 예외(`pika.exceptions.AMQPConnectionError`,
+  `OSError` — `connect_with_retry()`가 이미 잡는 것과 동일한 예외군)를 던지면 프로세스를
+  죽이지 않고 로그만 남긴 뒤 루프 최상단에서 `connect_with_retry()`를 다시 호출해 지수
+  백오프 재연결 후 컨슘을 재개합니다(백오프 로직 자체는 새로 만들지 않고 기존
+  `connect_with_retry()`를 그대로 재사용).
+- `SIGTERM`/`SIGINT`로 인한 정상 종료는 `run_consumer()`가 예외 없이 리턴하므로 구분됩니다 —
+  이때는 재연결 루프로 돌아가지 않고 `shutdown_requested` 플래그로 while을 빠져나갑니다.
+  시그널 핸들러는 재연결마다 바뀌는 현재 channel을 클로저 변수(`current_channel`)로 참조해
+  `stop_consuming()`을 호출합니다.
+
 ## ⚠️ 빌드 시 주의사항 (Dockerfile)
 
 - **빌드 컨텍스트는 리포지토리 루트여야 합니다.** `product-service/Dockerfile`은 `run_migration.py`
@@ -119,6 +159,8 @@ Postgres 테이블만 `TRUNCATE ... RESTART IDENTITY`하고 Redis 캐시·MinIO�
 
 ## 환경변수
 
+애플리케이션 코드가 직접 읽는 변수(각 서비스 컨테이너에 주입됨):
+
 | 변수명                      | 설명                                | 사용 서비스                              |
 | --------------------------- | ----------------------------------- | ----------------------------------------- |
 | `DATABASE_URL`              | PostgreSQL 연결 문자열              | Product Service, Image Processing Service |
@@ -128,8 +170,25 @@ Postgres 테이블만 `TRUNCATE ... RESTART IDENTITY`하고 Redis 캐시·MinIO�
 | `OBJECT_STORAGE_ACCESS_KEY` | 접근 키                             | Product Service, Image Processing Service |
 | `OBJECT_STORAGE_SECRET_KEY` | 시크릿 키                           | Product Service, Image Processing Service |
 | `OBJECT_STORAGE_BUCKET`     | 버킷 이름                           | Product Service, Image Processing Service |
+| `OBJECT_STORAGE_PUBLIC_URL` | 브라우저가 접근하는 공개 이미지 URL (로컬 전용, 미설정 시 `OBJECT_STORAGE_ENDPOINT` 사용) | Image Processing Service |
+| `RABBITMQ_HEALTH_FILE` | RabbitMQ 연결 상태 heartbeat 파일 경로 (선택, 미설정 시 `/tmp/healthy`) | Image Processing Service |
 
 모든 값은 코드에 하드코딩되어 있지 않으며 환경변수로만 주입됩니다 (추후 K8s Secret/OpenBao 연동 예정).
+
+위 값들의 실제 출처(자격증명)는 루트의 `.env` 파일이며, `docker-compose.yml`이 `${VAR}` 치환으로
+읽어 각 서비스의 연결 문자열을 조합합니다. `.env`는 git에 커밋하지 않고, 필요한 변수 목록은
+[`.env.example`](./.env.example)로 관리합니다.
+
+| 변수명                 | 설명                              |
+| ----------------------- | --------------------------------- |
+| `POSTGRES_DB`           | PostgreSQL 데이터베이스 이름      |
+| `POSTGRES_USER`         | PostgreSQL 계정                   |
+| `POSTGRES_PASSWORD`     | PostgreSQL 비밀번호               |
+| `RABBITMQ_USER`         | RabbitMQ 계정 (guest 대체)        |
+| `RABBITMQ_PASSWORD`     | RabbitMQ 비밀번호                 |
+| `MINIO_ROOT_USER`       | MinIO 루트 계정 (로컬 Object Storage 대체) |
+| `MINIO_ROOT_PASSWORD`   | MinIO 루트 비밀번호               |
+| `OBJECT_STORAGE_BUCKET` | MinIO/Object Storage 버킷 이름    |
 
 ## 알려진 기술 부채 및 향후 확장 방향
 

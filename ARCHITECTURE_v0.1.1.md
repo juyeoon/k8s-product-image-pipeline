@@ -1,7 +1,11 @@
-# 아키텍처 문서 (개발 단계) — v0.1.0 기준
+# 아키텍처 문서 (개발 단계) — v0.1.1 기준
 
-> 이 문서는 `v0.1.0` 태그 시점의 코드 구조를 기준으로 작성되었습니다. 이후 버전에서 구조가
+> 이 문서는 `v0.1.1` 태그 시점의 코드 구조를 기준으로 작성되었습니다. 이후 버전에서 구조가
 > 바뀌면 새 버전에 맞는 `ARCHITECTURE_vX.Y.Z.md`를 별도로 만드는 걸 권장합니다.
+>
+> **v0.1.0 대비 변경점**: Image Processing Service의 RabbitMQ 연결 상태 파일 기반 노출
+> (`/tmp/healthy` heartbeat)과, 실행 중 연결 끊김에 대한 재연결 while 루프(스펙 9번 항목)를
+> 추가했습니다 (섹션 5, 섹션 8 참고).
 
 이 문서는 소스코드가 실제로 어떻게 짜여 있고, 서비스들이 어떻게 상호작용하는지를 설명합니다.
 K8s 배포 아키텍처(Helm/ArgoCD/Ingress 구성)는 다음 로드맵 단계에서 `/docs`, `/charts`,
@@ -224,6 +228,19 @@ flowchart LR
   해주는 동작입니다.
 - `SIGTERM`(정상 종료 신호)은 별도로 처리합니다: 현재 처리 중인 메시지를 마무리한 뒤
   `channel.stop_consuming()`으로 새 메시지 소비를 멈추고 안전하게 종료합니다.
+- **RabbitMQ 연결 상태의 파일 기반 노출**: Image Processing Service는 HTTP 서버가 없어(스펙
+  7번 항목의 `GET /health`는 Product Service 전용) K8s Liveness/Readiness에 쓸 HTTP 엔드포인트가
+  없습니다. 대신 `connect_with_retry()` 연결 성공 직후와, consumer 루프가 살아있는 동안(메시지
+  처리마다 + 유휴 시에도 30초 주기로) `/tmp/healthy`(`RABBITMQ_HEALTH_FILE`로 경로 변경 가능)를
+  touch합니다. 재연결 재시도가 반복되는 동안은 touch되지 않으므로, `exec` probe가 이 파일의
+  mtime 신선도(예: 최근 1분 이내)를 확인하는 방식으로 연결 상태를 판단할 수 있습니다.
+- **실행 중 연결 끊김에 대한 재연결(스펙 9번 항목)**: `main.py`의 `main()`이 `connect_with_retry()`
+  + `run_consumer()` 호출을 `while not shutdown_requested:` 루프로 감쌉니다. 컨슘 도중
+  RabbitMQ 연결이 끊겨 `AMQPConnectionError`/`OSError`가 발생하면 프로세스를 종료하지 않고
+  로그만 남긴 뒤 `connect_with_retry()`를 다시 호출해 지수 백오프로 재연결하고 컨슘을
+  재개합니다(백오프 로직은 새로 만들지 않고 `connect_with_retry()`를 재사용). `SIGTERM`/`SIGINT`로
+  인한 정상 종료는 `run_consumer()`가 예외 없이 리턴하는 경로로 구분되어, 재연결 루프로
+  돌아가지 않고 그대로 종료됩니다.
 
 ---
 
@@ -297,8 +314,8 @@ graph LR
 
 | 파일 | 책임 |
 |---|---|
-| `main.py` | 프로세스 진입점. DB 연결 확립, SIGTERM/SIGINT 핸들러 등록, consumer 루프 실행 |
-| `queue_consumer.py` | RabbitMQ 소비(manual ack) + 재시도 카운트/DLQ 이동 로직 |
+| `main.py` | 프로세스 진입점. DB 연결 확립, SIGTERM/SIGINT 핸들러 등록, `connect_with_retry()` + consumer 루프를 감싸는 재연결 while 루프 |
+| `queue_consumer.py` | RabbitMQ 소비(manual ack) + 재시도 카운트/DLQ 이동 로직 + `/tmp/healthy` heartbeat(연결 상태 파일 노출) |
 | `processor.py` | 룰 기반 검수(형식/해상도) + Pillow 리사이징 3종. LLM 연동 지점 TODO 주석 포함 |
 | `db.py` | `update_product_status()` 단일 진입점 + `insert_product_image()` + 재연결 재시도 |
 | `storage.py` | 원본 다운로드, 가공 이미지 public-read 업로드(공개 URL 생성), `temp/` 삭제 |

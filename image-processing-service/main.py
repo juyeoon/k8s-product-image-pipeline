@@ -1,6 +1,8 @@
 import logging
 import signal
 
+import pika
+
 import db
 import storage
 import processor
@@ -31,21 +33,41 @@ def process_task(product_id: int, temp_image_key: str):
 
 def main():
     db.init_pool()
-    connection, channel = queue_consumer.connect_with_retry()
+
+    shutdown_requested = False
+    current_channel = None
 
     def handle_shutdown(signum, frame):
+        nonlocal shutdown_requested
         logger.info(f"event=shutdown_signal_received signal={signum}")
-        channel.stop_consuming()
+        shutdown_requested = True
+        # 재연결 대기(백오프) 중이면 channel이 없어 여기서 할 게 없다 — 다음 while 조건 체크에서 빠져나간다.
+        if current_channel is not None:
+            current_channel.stop_consuming()
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
-    logger.info("event=consumer_started")
-    try:
-        queue_consumer.run_consumer(channel, process_task)
-    finally:
-        connection.close()
-        logger.info("event=consumer_stopped")
+    # RabbitMQ 연결이 실행 중 끊기면(Pod 재배포 등) 프로세스를 죽이지 않고 connect_with_retry()로
+    # 재연결 후 컨슘을 재개한다. 정상 종료(SIGTERM/SIGINT)는 run_consumer가 예외 없이 리턴하므로
+    # 이 while이 shutdown_requested를 보고 빠져나간다.
+    while not shutdown_requested:
+        connection, channel = queue_consumer.connect_with_retry()
+        current_channel = channel
+
+        logger.info("event=consumer_started")
+        try:
+            queue_consumer.run_consumer(channel, process_task)
+        except (pika.exceptions.AMQPConnectionError, OSError) as e:
+            logger.warning(f"event=rabbitmq_connection_lost error={e}")
+        finally:
+            current_channel = None
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    logger.info("event=consumer_stopped")
 
 
 if __name__ == "__main__":

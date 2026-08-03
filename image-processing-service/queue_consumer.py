@@ -8,6 +8,7 @@ import os
 import json
 import time
 import logging
+from pathlib import Path
 
 import pika
 
@@ -22,6 +23,16 @@ MAX_CONNECT_RETRIES = 10
 INITIAL_BACKOFF_SECONDS = 2
 MAX_BACKOFF_SECONDS = 60
 
+# K8s liveness/readiness probe(exec)가 이 파일의 mtime 신선도로 RabbitMQ 연결 상태를 판단한다.
+# 연결 성공 직후, 그리고 컨슘 루프가 살아있는 동안 주기적으로 touch되며, 재연결 시도 중에는
+# 갱신되지 않아야 하므로 connect_with_retry() 실패 경로에서는 절대 touch하지 않는다.
+HEALTH_FILE = Path(os.environ.get("RABBITMQ_HEALTH_FILE", "/tmp/healthy"))
+HEARTBEAT_INTERVAL_SECONDS = 30
+
+
+def _touch_health_file():
+    HEALTH_FILE.touch()
+
 
 def connect_with_retry():
     attempt = 0
@@ -35,6 +46,7 @@ def connect_with_retry():
             channel.queue_declare(queue=DLQ_NAME, durable=True)
             channel.basic_qos(prefetch_count=1)
             logger.info("event=rabbitmq_connected")
+            _touch_health_file()
             return connection, channel
         except (pika.exceptions.AMQPConnectionError, OSError) as e:
             attempt += 1
@@ -81,5 +93,12 @@ def run_consumer(channel, process_fn):
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
+        _touch_health_file()
+
+    def _heartbeat():
+        _touch_health_file()
+        channel.connection.call_later(HEARTBEAT_INTERVAL_SECONDS, _heartbeat)
+
+    channel.connection.call_later(HEARTBEAT_INTERVAL_SECONDS, _heartbeat)
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=_on_message)
     channel.start_consuming()
