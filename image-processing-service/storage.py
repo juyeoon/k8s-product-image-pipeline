@@ -13,6 +13,11 @@ OBJECT_STORAGE_ACCESS_KEY = os.environ["OBJECT_STORAGE_ACCESS_KEY"]
 OBJECT_STORAGE_SECRET_KEY = os.environ["OBJECT_STORAGE_SECRET_KEY"]
 OBJECT_STORAGE_BUCKET = os.environ["OBJECT_STORAGE_BUCKET"]
 
+# NHN Cloud Object Storage의 공개 URL은 /v1/AUTH_<계정ID>/<버킷>/<key> 형식이다.
+# 로컬 docker-compose의 MinIO는 이 경로 구조를 쓰지 않으므로 미지정 시(기본값 "")
+# 세그먼트 없이 기존 형식을 그대로 유지한다.
+OBJECT_STORAGE_ACCOUNT_ID = os.environ.get("OBJECT_STORAGE_ACCOUNT_ID", "")
+
 # 실제 NHN Cloud Object Storage 환경에서는 OBJECT_STORAGE_ENDPOINT 자체가 공개적으로
 # 접근 가능한 URL이라 별도 값이 필요 없다. 로컬 docker-compose에서는 서비스 간 통신에
 # 쓰는 내부 호스트명(예: http://minio:9000)을 브라우저가 그대로 resolve할 수 없으므로,
@@ -63,7 +68,10 @@ def upload_public_image(key: str, file_bytes: bytes, content_type: str) -> str:
         raise
 
     logger.info(f"event=public_upload_succeeded key={key} size_bytes={len(file_bytes)}")
-    return f"{OBJECT_STORAGE_PUBLIC_URL.rstrip('/')}/{OBJECT_STORAGE_BUCKET}/{key}"
+    base_url = OBJECT_STORAGE_PUBLIC_URL.rstrip("/")
+    if OBJECT_STORAGE_ACCOUNT_ID:
+        return f"{base_url}/v1/AUTH_{OBJECT_STORAGE_ACCOUNT_ID}/{OBJECT_STORAGE_BUCKET}/{key}"
+    return f"{base_url}/{OBJECT_STORAGE_BUCKET}/{key}"
 
 
 def delete_temp_image(key: str):

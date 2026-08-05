@@ -1,20 +1,7 @@
-# 아키텍처 문서 (개발 단계) — v0.1.3 기준
+# 아키텍처 문서 (개발 단계)
 
-> 이 문서는 `v0.1.3` 태그 시점의 코드 구조를 기준으로 작성되었습니다. 이후 버전에서 구조가
-> 바뀌면 새 버전에 맞는 `ARCHITECTURE_vX.Y.Z.md`를 별도로 만드는 걸 권장합니다.
->
-> **v0.1.2 대비 변경점**: `nginx.k8s.conf`에서 `/health` proxy_pass 블록도 제거했습니다.
-> `/health`는 Product Service 전용 엔드포인트라 Web UI의 헬스체크와 무관하고, K8s에서
-> Web UI 헬스체크는 `/` 경로만 사용하면 되기 때문입니다 (섹션 8 Web UI 표 참고).
->
-> **v0.1.1 대비 변경점**: Web UI 이미지가 기본으로 굽는 nginx 설정을 K8s 실배포 기준
-> (`nginx.k8s.conf`, `/products` proxy_pass 제외)으로 바꾸고, 로컬 `docker-compose`는
-> 기존 `nginx.conf`를 컨테이너 런타임에 volume으로 덮어써서 그대로 사용하도록 분리했습니다
-> (섹션 2, 섹션 8 Web UI 표 참고).
->
-> **v0.1.0 대비 변경점**: Image Processing Service의 RabbitMQ 연결 상태 파일 기반 노출
-> (`/tmp/healthy` heartbeat)과, 실행 중 연결 끊김에 대한 재연결 while 루프(스펙 9번 항목)를
-> 추가했습니다 (섹션 5, 섹션 8 참고).
+> 이 문서는 항상 현재 코드 구조를 기준으로 최신 상태를 유지합니다. 버전별 변경 이력은
+> [RELEASE_NOTES.md](./RELEASE_NOTES.md)를 참고하세요.
 
 이 문서는 소스코드가 실제로 어떻게 짜여 있고, 서비스들이 어떻게 상호작용하는지를 설명합니다.
 K8s 배포 아키텍처(Helm/ArgoCD/Ingress 구성)는 다음 로드맵 단계에서 `/docs`, `/charts`,
@@ -28,7 +15,7 @@ K8s 배포 아키텍처(Helm/ArgoCD/Ingress 구성)는 다음 로드맵 단계�
 
 ## 기술 스택
 
-실제로 사용 중인 버전 기준입니다 (`v0.1.0` 태그 시점).
+실제로 사용 중인 버전 기준입니다.
 
 ### 애플리케이션 서비스
 
@@ -353,5 +340,6 @@ graph LR
 ## 관련 문서
 
 - [README.md](./README.md) — 실행 방법, 환경변수, 완료 기준 검증 결과
+- [RELEASE_NOTES.md](./RELEASE_NOTES.md) — 버전별 변경 이력
 - [TESTING.md](./TESTING.md) — 테스트 절차, 재현 명령, 발견된 버그 상세
 - [demo/README.md](./demo/README.md) — 발표용 데모 시나리오

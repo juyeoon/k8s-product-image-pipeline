@@ -2,7 +2,7 @@
 
 NHN Cloud 위에 직접 구축한 쿠버네티스 클러스터에서, 상품 이미지 등록 파이프라인을 통해 GitOps 배포와 장애 자동 복구를 검증하는 프로젝트
 
-> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE_v0.1.3.md](./ARCHITECTURE_v0.1.3.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
+> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE.md](./ARCHITECTURE.md), 버전별 변경 이력은 [RELEASE_NOTES.md](./RELEASE_NOTES.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
 
 ## 리포지토리 구조
 
@@ -178,6 +178,7 @@ K8s가 대신 해주지만, "실행 중 끊김 → 재연결"이라는 스펙 �
 | `OBJECT_STORAGE_SECRET_KEY` | 시크릿 키                           | Product Service, Image Processing Service |
 | `OBJECT_STORAGE_BUCKET`     | 버킷 이름                           | Product Service, Image Processing Service |
 | `OBJECT_STORAGE_PUBLIC_URL` | 브라우저가 접근하는 공개 이미지 URL (로컬 전용, 미설정 시 `OBJECT_STORAGE_ENDPOINT` 사용) | Image Processing Service |
+| `OBJECT_STORAGE_ACCOUNT_ID` | NHN Cloud Object Storage 계정 ID. 설정 시 공개 URL이 `/v1/AUTH_<값>/<버킷>/<key>` 형식이 됨 (선택, 로컬 MinIO는 이 경로 구조가 없으므로 미설정) | Image Processing Service |
 | `RABBITMQ_HEALTH_FILE` | RabbitMQ 연결 상태 heartbeat 파일 경로 (선택, 미설정 시 `/tmp/healthy`) | Image Processing Service |
 
 모든 값은 코드에 하드코딩되어 있지 않으며 환경변수로만 주입됩니다 (추후 K8s Secret/OpenBao 연동 예정).
