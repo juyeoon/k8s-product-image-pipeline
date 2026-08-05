@@ -2,7 +2,7 @@
 
 NHN Cloud 위에 직접 구축한 쿠버네티스 클러스터에서, 상품 이미지 등록 파이프라인을 통해 GitOps 배포와 장애 자동 복구를 검증하는 프로젝트
 
-> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE_v0.1.1.md](./ARCHITECTURE_v0.1.1.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
+> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE_v0.1.2.md](./ARCHITECTURE_v0.1.2.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
 
 ## 리포지토리 구조
 
@@ -156,6 +156,13 @@ K8s가 대신 해주지만, "실행 중 끊김 → 재연결"이라는 스펙 �
   ```
   docker build --platform linux/amd64 -f product-service/Dockerfile -t product-service:latest .
   ```
+- **`web-ui`는 K8s용 nginx 설정을 기본으로 빌드합니다.** `web-ui/Dockerfile`은
+  `web-ui/nginx.conf`가 아니라 `web-ui/nginx.k8s.conf`(product-service로의 `/products`
+  proxy_pass 블록이 빠진 버전, 실배포에서는 Ingress가 그 역할을 대신함)를
+  이미지의 `/etc/nginx/conf.d/default.conf`로 복사합니다. 빌드 커맨드 자체는
+  동일합니다 — `docker build -f web-ui/Dockerfile -t web-ui:latest ./web-ui`.
+  로컬 `docker-compose`에서는 `web-ui` 서비스에 `volumes`로 기존 `nginx.conf`를
+  런타임에 덮어 마운트해 `/products` 프록시 동작을 그대로 유지합니다.
 
 ## 환경변수
 
