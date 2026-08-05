@@ -1,3 +1,13 @@
+# Custom
+
+CLAUDE.md
+claude_code_build_instructions_*.md
+
+# 발표용 데모 이미지 (바이너리, generate_demo_images.py로 재생성 가능)
+demo/images/
+
+# Python
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
