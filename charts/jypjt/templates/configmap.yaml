@@ -1,0 +1,9 @@
+{{- with .Values }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .configMap.name }}
+  namespace: {{ .global.namespace }}
+data:
+  REDIS_URL: "redis://redis-service.{{ .global.namespace }}.svc.cluster.local:{{ .redis.servicePort }}/0"
+{{- end }}

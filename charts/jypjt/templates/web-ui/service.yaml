@@ -1,0 +1,15 @@
+{{- with .Values.webUi }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-ui-service
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .label }}
+  ports:
+    - protocol: TCP
+      port: {{ .servicePort }}
+      targetPort: {{ .containerPort }}
+{{- end }}

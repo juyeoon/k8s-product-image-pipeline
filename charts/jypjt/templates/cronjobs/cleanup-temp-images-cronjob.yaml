@@ -1,0 +1,28 @@
+{{- with .Values }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-temp-images
+  namespace: {{ .global.namespace }}
+spec:
+  schedule: {{ .cronjobs.cleanupTempImages.schedule }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: {{ .secrets.imagePullSecret }}
+          containers:
+            - name: cleanup-temp-images
+              image: "{{ .global.harborRegistry }}/{{ .imageProcessingService.image }}:{{ .global.imageTag }}"
+              command: ["python", "scripts/cleanup_temp_images.py"]
+              envFrom:
+                - secretRef:
+                    name: {{ .secrets.credentials.objectStorage }}
+{{- end }}

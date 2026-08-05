@@ -1,0 +1,14 @@
+{{- with .Values.postgres }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .label }}-service
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ .label }}
+  ports:
+    - port: {{ .servicePort }}
+      targetPort: {{ .containerPort }}
+{{- end }}
