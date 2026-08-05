@@ -1,7 +1,11 @@
-# 아키텍처 문서 (개발 단계) — v0.1.2 기준
+# 아키텍처 문서 (개발 단계) — v0.1.3 기준
 
-> 이 문서는 `v0.1.2` 태그 시점의 코드 구조를 기준으로 작성되었습니다. 이후 버전에서 구조가
+> 이 문서는 `v0.1.3` 태그 시점의 코드 구조를 기준으로 작성되었습니다. 이후 버전에서 구조가
 > 바뀌면 새 버전에 맞는 `ARCHITECTURE_vX.Y.Z.md`를 별도로 만드는 걸 권장합니다.
+>
+> **v0.1.2 대비 변경점**: `nginx.k8s.conf`에서 `/health` proxy_pass 블록도 제거했습니다.
+> `/health`는 Product Service 전용 엔드포인트라 Web UI의 헬스체크와 무관하고, K8s에서
+> Web UI 헬스체크는 `/` 경로만 사용하면 되기 때문입니다 (섹션 8 Web UI 표 참고).
 >
 > **v0.1.1 대비 변경점**: Web UI 이미지가 기본으로 굽는 nginx 설정을 K8s 실배포 기준
 > (`nginx.k8s.conf`, `/products` proxy_pass 제외)으로 바꾸고, 로컬 `docker-compose`는
@@ -334,7 +338,7 @@ graph LR
 | `app.js` | 폼 제출, 판매자 목록(서버 폴링 기반, `GET /products?status=all`), 구매자 카드 목록, 이미지 확대 모달(사이즈 탭 + 실제 픽셀/용량 표시), 토스트 |
 | `style.css` | 배지 색상/펄스 애니메이션, 카드/모달 스타일 |
 | `nginx.conf` | 정적 파일 서빙 + `/products`, `/health`를 product-service로 프록시 (로컬 `docker-compose` 전용, 컨테이너 런타임에 volume으로 마운트) |
-| `nginx.k8s.conf` | 정적 파일 서빙 + `/health`만 product-service로 프록시, `/products` proxy_pass는 제외 (실배포용, `Dockerfile`이 이미지 빌드 시 기본으로 굽는 설정 — K8s에서는 Ingress가 `/products` 라우팅을 대신함) |
+| `nginx.k8s.conf` | 정적 파일 서빙만 담당, product-service로의 proxy_pass 없음 (`/products`, `/health` 모두 제외) (실배포용, `Dockerfile`이 이미지 빌드 시 기본으로 굽는 설정 — `/products`는 Ingress가 라우팅하고, `/health`는 Product Service 전용 엔드포인트라 Web UI 헬스체크(`/`)와 무관함) |
 
 ### 그 외
 
