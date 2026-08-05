@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>상품 등록 파이프라인 데모</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <header class="app-header">
+    <h1>상품 등록 파이프라인</h1>
+    <nav class="tabs">
+      <button id="tab-seller" class="tab-button active" type="button">판매자 화면</button>
+      <button id="tab-buyer" class="tab-button" type="button">구매자 화면</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="seller-view" class="view">
+      <div class="panel">
+        <h2>상품 등록</h2>
+        <form id="product-form">
+          <label>
+            상품명
+            <input type="text" id="field-name" required />
+          </label>
+          <label>
+            가격
+            <input type="number" id="field-price" min="0" required />
+          </label>
+          <label>
+            설명
+            <textarea id="field-description" rows="3"></textarea>
+          </label>
+          <label>
+            이미지 (jpg/png, 최대 20MB)
+            <input type="file" id="field-image" accept="image/jpeg,image/png" required />
+          </label>
+          <button type="submit" id="submit-button">등록</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>등록한 상품 목록</h2>
+        <ul id="seller-product-list" class="product-list"></ul>
+      </div>
+    </section>
+
+    <section id="buyer-view" class="view hidden">
+      <h2>구매 가능한 상품</h2>
+      <div id="buyer-product-grid" class="product-grid"></div>
+    </section>
+  </main>
+
+  <div id="image-modal" class="modal hidden">
+    <div id="modal-backdrop" class="modal-backdrop"></div>
+    <div class="modal-content">
+      <button id="modal-close" class="modal-close" type="button" aria-label="닫기">×</button>
+      <div id="modal-size-tabs" class="modal-size-tabs"></div>
+      <img id="modal-image" src="" alt="" />
+      <div id="modal-caption" class="modal-caption"></div>
+      <div id="modal-meta" class="modal-meta"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

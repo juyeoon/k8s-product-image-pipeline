@@ -1,0 +1,53 @@
+{{- with .Values.webUi }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .label }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  replicas: {{ .replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .rollingUpdate.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: {{ .label }}
+  template:
+    metadata:
+      labels:
+        app: {{ .label }}
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ .label }}
+                topologyKey: kubernetes.io/hostname
+      imagePullSecrets:
+        - name: {{ $.Values.secrets.imagePullSecret }}
+      containers:
+        - name: {{ .label }}
+          image: "{{ $.Values.global.harborRegistry }}/{{ .image }}:{{ $.Values.global.imageTag }}"
+          ports:
+            - containerPort: {{ .containerPort }}
+          resources:
+            requests:
+              cpu: {{ .resources.requests.cpu }}
+              memory: {{ .resources.requests.memory }}
+            limits:
+              cpu: {{ .resources.limits.cpu }}
+              memory: {{ .resources.limits.memory }}
+          livenessProbe:
+            httpGet: { path: /, port: {{ .containerPort }} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /, port: {{ .containerPort }} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+{{- end }}

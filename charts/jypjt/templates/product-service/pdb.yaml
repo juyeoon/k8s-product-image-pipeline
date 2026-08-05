@@ -1,0 +1,12 @@
+{{- with .Values.productService }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .label }}-pdb
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: {{ .label }}
+{{- end }}

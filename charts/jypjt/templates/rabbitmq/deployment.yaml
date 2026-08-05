@@ -1,0 +1,63 @@
+{{- with .Values.rabbitmq }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .label }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  replicas: {{ .replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .label }}
+  template:
+    metadata:
+      labels:
+        app: {{ .label }}
+    spec:
+      containers:
+        - name: {{ .label }}
+          image: "{{ .image }}"
+          ports:
+            - containerPort: {{ .amqpPort }}
+            - containerPort: {{ .managementPort }}
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.credentials.rabbitMQ }}
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.credentials.rabbitMQ }}
+                  key: RABBITMQ_PASSWORD
+          volumeMounts:
+            - name: {{ .label }}-data
+              mountPath: /var/lib/rabbitmq
+          resources:
+            requests:
+              cpu: {{ .resources.requests.cpu }}
+              memory: {{ .resources.requests.memory }}
+            limits:
+              cpu: {{ .resources.limits.cpu }}
+              memory: {{ .resources.limits.memory }}
+          startupProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            timeoutSeconds: 10
+            failureThreshold: 18
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            timeoutSeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "check_running"] }
+            timeoutSeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: {{ .label }}-data
+          persistentVolumeClaim:
+            claimName: {{ .label }}-data
+{{- end }}

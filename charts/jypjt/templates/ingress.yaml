@@ -1,0 +1,26 @@
+{{- with .Values }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .global.namespace }}-ingress
+  namespace: {{ .global.namespace }}
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /products
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .productService.label }}-service
+                port:
+                  number: {{ .productService.servicePort }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .webUi.label }}-service
+                port:
+                  number: {{ .webUi.servicePort }}
+{{- end }}
