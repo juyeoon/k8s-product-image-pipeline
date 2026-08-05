@@ -1,0 +1,108 @@
+global:
+  namespace: jypjt
+  harborRegistry: harbor.jypjt.local/jypjt
+  imageTag: v0.1.4
+
+webUi:
+  label: web-ui # deploy name 포함
+  image: web-ui
+  replicas: 2
+  servicePort: 80
+  containerPort: 80
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 150m, memory: 192Mi }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+productService:
+  label: product-service # deploy name 포함
+  image: product-service
+  replicas: 2
+  servicePort: 8000
+  containerPort: 8000
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+imageProcessingService:
+  label: image-processing-service
+  image: image-processing-service
+  accountId: "50e521ea96eb4ded9d2db203d0959a17"
+  replicas: 2
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+  resources:
+    requests: { cpu: 150m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+postgres:
+  label: postgres
+  image: postgres:16-alpine
+  replicas: 1
+  containerPort: 5432
+  servicePort: 5432
+  db:
+    name: productdb
+    user: jypjt_app
+  storage:
+    className: nfs-client
+    size: 2Gi
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+redis:
+  label: redis
+  image: redis:7-alpine
+  replicas: 1
+  servicePort: 6379
+  containerPort: 6379
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+rabbitmq:
+  label: rabbitmq
+  image: rabbitmq:3.13-management-alpine
+  replicas: 1
+  amqpPort: 5672            # 실제 메시지 큐 기능
+  managementPort: 15672     # 사람이 보는 웹 대시보드
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  storage:
+    className: nfs-client
+    size: 1Gi
+
+cronjobs:
+  cleanupTempImages:
+    schedule: "0 * * * *" # 정각마다(test용으로 1시간마다 설정)
+
+configMap:
+  name: app-config
+
+secrets:
+  imagePullSecret: harbor-pull-secret
+  credentials:
+    objectStorage: object-storage-credentials
+    db: db-credentials
+    rabbitMQ: rabbitmq-credentials
+

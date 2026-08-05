@@ -1,0 +1,17 @@
+{{- with .Values.rabbitmq }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .label }}-service
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  selector:
+    app: {{ .label }}
+  ports:
+    - name: amqp
+      port: {{ .amqpPort }}
+      targetPort: {{ .amqpPort }}
+    - name: management
+      port: {{ .managementPort }}
+      targetPort: {{ .managementPort }}
+{{- end }}

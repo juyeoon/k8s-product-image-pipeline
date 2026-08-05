@@ -1,0 +1,26 @@
+{{- with .Values }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migration
+  namespace: {{ .global.namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: {{ .secrets.imagePullSecret }}
+      containers:
+        - name: db-migration
+          image: "{{ .global.harborRegistry }}/{{ .productService.image }}:{{ .global.imageTag }}"
+          command: ["python", "migrations/run_migration.py"]
+          envFrom:
+            - secretRef:
+                name: {{ .secrets.credentials.db }}
+{{- end }}

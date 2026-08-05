@@ -1,0 +1,13 @@
+{{- with .Values.rabbitmq }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .label }}-data
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .storage.className }}
+  resources:
+    requests:
+      storage: {{ .storage.size }}
+{{- end }}

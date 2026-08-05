@@ -1,0 +1,39 @@
+{{- with .Values.redis }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .label }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  replicas: {{ .replicas }}
+  selector:
+    matchLabels:
+      app: {{ .label }}
+  template:
+    metadata:
+      labels:
+        app: {{ .label }}
+    spec:
+      containers:
+        - name: {{ .label }}
+          image: "{{ .image }}"
+          ports:
+            - containerPort: {{ .containerPort }}
+          resources:
+            requests:
+              cpu: {{ .resources.requests.cpu }}
+              memory: {{ .resources.requests.memory }}
+            limits:
+              cpu: {{ .resources.limits.cpu }}
+              memory: {{ .resources.limits.memory }}
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+{{- end }}
