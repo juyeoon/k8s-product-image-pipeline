@@ -1,0 +1,16 @@
+controller:
+  nodeSelector:
+    kubernetes.io/hostname: jypjt-control-plane
+  service:
+    type: LoadBalancer
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      # 이 릴리스의 ServiceMonitor도 postgres_exporter와 마찬가지로
+      # kube-prometheus-stack이 만든 라벨 셀렉터 없이 전체를 보게 설정돼 있어(20번, 결정 #34)
+      # namespace 지정 없이도 Prometheus가 인식함
