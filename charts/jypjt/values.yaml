@@ -6,7 +6,7 @@ global:
 webUi:
   label: web-ui # deploy name 포함
   image: web-ui
-  replicas: 3
+  replicas: 2
   servicePort: 80
   containerPort: 80
   rollingUpdate:
