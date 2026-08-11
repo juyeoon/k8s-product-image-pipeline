@@ -4,7 +4,7 @@
 Pillow가 설치된 환경에서 실행해야 하므로, 이 리포지토리에서는 이미 Pillow가 들어있는
 image-processing-service 이미지로 실행하는 것을 권장한다 (run_demo.sh가 자동으로 해준다):
 
-    docker run --rm -v "$(pwd)/demo:/demo" \
+    docker run --rm -v "$(pwd)/demo/local:/demo" \
       k8s-product-image-pipeline-image-processing-service \
       python /demo/generate_demo_images.py
 
