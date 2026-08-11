@@ -1,7 +1,7 @@
 global:
   namespace: jypjt
   harborRegistry: harbor.jypjt.local/jypjt
-  imageTag: v0.1.4
+  imageTag: v0.1.5
 
 webUi:
   label: web-ui # deploy name 포함
