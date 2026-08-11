@@ -3,4 +3,4 @@ name: jypjt
 description: NHN Cloud K8s 프로젝트 - 이커머스 상품 이미지 파이프라인 (MSA-lite)
 type: application
 version: 0.1.0
-appVersion: "0.1.1"
+appVersion: "0.1.5"
