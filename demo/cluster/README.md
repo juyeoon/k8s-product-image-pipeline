@@ -43,6 +43,8 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-pull-secret
       containers:
         - name: reset-demo-data
           image: harbor.jypjt.local/jypjt/product-service:v0.1.4
