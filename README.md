@@ -1,262 +1,362 @@
-# k8s-product-image-pipeline
+# 클라우드 네이티브 쿠버네티스 환경 구축: 상품 이미지 등록 파이프라인 운영
 
-NHN Cloud 위에 직접 구축한 쿠버네티스 클러스터에서, 상품 이미지 등록 파이프라인을 통해 GitOps 배포와 장애 자동 복구를 검증하는 프로젝트
+> NHN Cloud 위에 관리형 쿠버네티스 서비스 없이 kubeadm으로 클러스터를 직접 구축하고,
+> 이커머스 상품 이미지 처리 파이프라인을 GitOps로 배포한 뒤, 장애를 주입해 자동 복구를 수치로 검증한 프로젝트입니다.
 
-> 이 앱은 K8s 운영 포트폴리오의 "재료"입니다. 비즈니스 로직의 완성도보다 단순함, 명확한 상태 전이, 실제 부하를 유발할 수 있는 처리 과정을 우선했습니다. 애플리케이션 빌드 스펙 전문은 [`claude_code_build_instructions_260730.md`](./claude_code_build_instructions_260730.md) 참고. 서비스 구조와 다이어그램은 [ARCHITECTURE.md](./ARCHITECTURE.md), 버전별 변경 이력은 [RELEASE_NOTES.md](./RELEASE_NOTES.md), 테스트 절차와 재현 명령은 [TESTING.md](./TESTING.md) 참고.
+|          |                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------- |
+| 기간     | 2026-07-31 ~ 2026-08-07 (구축·실험 8일) + 문서화                                          |
+| 역할     | 인프라 설계 · 클러스터 구축 · 배포 파이프라인 · 장애 대응 (애플리케이션 코드는 AI에 위임) |
+| 클라우드 | NHN Cloud (OpenStack 기반) — 전 구간 단일 클라우드                                        |
 
-## 리포지토리 구조
+## 핵심 결과
 
-```
-/product-service           # Product Service (FastAPI)
-/image-processing-service  # Image Processing Service (RabbitMQ consumer + Pillow)
-/web-ui                    # 발표용 Web UI (순수 HTML/CSS/JS)
-/migrations                # DB 스키마 마이그레이션 + run_migration.py
-/scripts                   # cleanup_temp_images.py (temp/ 정리)
-/charts                    # (범위 밖) Helm 차트 - 이후 K8s 배포 단계
-/argocd                    # (범위 밖) ArgoCD Application 매니페스트 - 이후 배포 단계
-/docs                      # (범위 밖) 아키텍처 다이어그램, 로드맵 문서 보관용
-/demo                      # (앱 스펙 범위 밖) 발표용 데모 이미지 생성 + 업로드 스크립트, demo/README.md 참고
-```
+| 지표            | 값                                                      |
+| --------------- | ------------------------------------------------------- |
+| Pod Kill MTTR   | 12초 — 그중 11초가 Readiness Probe 대기임을 분해해 확인 |
+| HPA 스케일아웃  | CPU 91% 도달 시 Replica 2 → 3, 직후 68~72%로 하강       |
+| 부하 테스트     | 45,898요청 / 실패율 0.00% / 응답시간 Avg 3ms            |
+| 기록한 의사결정 | 40건 — 전부 A/B 비교 + 기각 사유 포함                   |
 
-## 로컬 실행 (docker-compose)
+---
 
-```
-cp .env.example .env   # 최초 1회, 자격증명은 로컬 개발용 더미 값
-docker compose up --build
-```
+## 아키텍처
 
-`docker-compose.yml`은 자격증명을 직접 담지 않고 `.env`에서 `${VAR}`로 값을 가져옵니다.
-`.env`는 `.gitignore`에 등록되어 git에 커밋되지 않으며, 어떤 변수가 필요한지는
-[`.env.example`](./.env.example)에 정리되어 있습니다.
+![전체 쿠버네티스 아키텍처](./docs/full_k8s_architecture.svg)
 
-- Product Service: http://localhost:8000
-- Web UI: http://localhost:8080
-- RabbitMQ 관리 콘솔: http://localhost:15672 (app / app_password)
-- MinIO 콘솔: http://localhost:9001 (minioadmin / minioadmin)
-
-`migration` 컨테이너는 `run_migration.py`를 실행하고 종료되는 1회성 컨테이너입니다 (K8s Job을 로컬에서 흉내낸 것).
-
-### ⚠️ 로컬 전용: Object Storage는 MinIO로 대체
-
-실제 배포 환경에서는 `OBJECT_STORAGE_*` 환경변수가 NHN Cloud Object Storage를 가리키지만,
-로컬 개발/테스트에서는 S3 호환 오픈소스인 **MinIO**로 대체했습니다 (스펙 8번 항목에는 명시되지
-않았으나, 완료 기준 체크리스트의 업로드→처리→active 전환 흐름을 로컬에서 검증하려면 실제로
-동작하는 Object Storage가 필요해 추가함 — 사용자 확인 후 반영).
-
-Image Processing Service가 생성하는 이미지 공개 URL은 서비스 간 통신용 내부 호스트명
-(`http://minio:9000`)이 아니라 `OBJECT_STORAGE_PUBLIC_URL`(`http://localhost:9000`)을 사용하도록
-분리했습니다. 컨테이너 내부(업로드/다운로드)는 `OBJECT_STORAGE_ENDPOINT`로 `minio` 호스트명을
-쓰고, 브라우저가 실제로 여는 URL만 호스트에 노출된 포트(`localhost:9000`)를 가리키게 하여
-hosts 파일을 건드리지 않고도 구매자 화면에서 썸네일이 정상적으로 보입니다. 실제 NHN Cloud
-배포 환경에서는 `OBJECT_STORAGE_ENDPOINT` 자체가 공개 URL이므로 `OBJECT_STORAGE_PUBLIC_URL`은
-설정하지 않아도 됩니다 (미설정 시 `OBJECT_STORAGE_ENDPOINT`를 그대로 사용).
-
-### 발표 전 데이터 초기화
-
-개발/테스트하면서 등록한 상품들이 DB에 남아 있으면, 구매자 화면에 실제 발표용 데모 상품과
-테스트 쓰레기 데이터가 섞여서 나옵니다 (`products.id`는 `SERIAL`이라 충돌은 나지 않지만,
-지저분해 보입니다). 실제 발표 전에는 완전히 깨끗한 상태로 리셋하는 것을 권장합니다.
+### 서비스 흐름
 
 ```
-docker compose down -v   # Postgres/MinIO 볼륨까지 전부 삭제
-docker compose up --build -d
+판매자 → Ingress → Product Service → (상품 draft 생성 + RabbitMQ 발행) → 즉시 202 응답
+                                            ↓
+                          Image Processing Service (큐 소비)
+                                            ↓
+                       룰 기반 검수 → 3종 리사이징(thumbnail/detail/zoom)
+                                            ↓
+                       Object Storage 업로드 → 상태 active (또는 rejected)
+                                            ↓
+구매자 → Ingress → Product Service → active 상품만 조회 (Redis 캐싱)
 ```
 
-재기동 후 `GET /products`가 빈 배열(`[]`)을 반환하면 초기화가 끝난 것입니다. 이 상태에서
-`demo/run_demo.sh`([demo/README.md](./demo/README.md) 참고)를 실행하면 상품 id가 1번부터
-새로 시작하고, 데모용 상품만 깨끗하게 보입니다.
+상품은 `draft → processing → active | rejected` 상태 기계를 따릅니다. 비동기 큐를 쓴 이유는 이미지 검수·리사이징이 실제로 무거운 작업이기 때문이고, 이 부하가 뒤에서 HPA 실험의 재료가 됩니다.
 
-컨테이너를 다시 만들 필요 없이 데이터만 비우고 싶다면(예: 발표 리허설을 여러 번 반복할 때)
-더 가벼운 방법도 있습니다:
+### API 엔드포인트 (Product Service)
+
+| 메서드 / 경로                   | 응답                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `POST /products`                | `202` `{product_id, status:"draft"}` · `400`(미지원 포맷) · `413`(20MB 초과) |
+| `GET /products` (`?status=all`) | `200` 목록 (Redis 캐싱)                                                      |
+| `GET /products/{id}`            | `200` 상세 · `404`                                                           |
+| `GET /health`                   | `200` · `503` (DB/Redis 상태 포함)                                           |
+
+세 서비스 모두 HPA를 붙였습니다 — Product Service와 Image Processing Service는 2~4개, Web UI는 2~3개입니다. Web UI만 상한이 낮은 건 정적 파일 서빙이라 부하 대비 확장 필요가 작기 때문입니다.
+
+Image Processing Service는 HTTP 엔드포인트가 없는 순수 RabbitMQ 컨슈머입니다. 그래서 Liveness Probe를 HTTP로 걸 수 없어, 파일 기반 heartbeat(`/tmp/healthy`)를 두고 `find -mmin -2`로 신선도를 검사합니다.
+
+### 이미지 처리 스펙
+
+| 항목      | 값                                                                 |
+| --------- | ------------------------------------------------------------------ |
+| 지원 포맷 | JPEG, PNG (결과물은 항상 JPEG `quality=85`)                        |
+| 검수 룰   | 가로·세로 중 하나라도 500px 미만이면 반려                          |
+| 리사이징  | thumbnail 200px / detail 800px / zoom 1600px (긴 변 기준, LANCZOS) |
+
+---
+
+## 왜 관리형 서비스를 쓰지 않았나
+
+NKS(NHN Kubernetes Service)를 쓰면 클러스터는 몇 분 만에 생깁니다. 그런데 그렇게 하면 CNI·스토리지·로드밸런서 계층을 한 번도 안 보고 지나가게 됩니다.
+
+이 프로젝트의 목적은 동작하는 서비스를 만드는 게 아니라 인프라를 이해하는 것이었으므로, 의도적으로 kubeadm 직접 구축을 택했습니다.
+
+![NHN Cloud 인프라 · 네트워크 구성](./docs/infra_network_architecture.svg)
+
+인스턴스 7대를 직접 올리고, 신뢰 경계마다 보안 그룹과 키페어를 나눴습니다. Floating IP는 Bastion · Control Plane · Harbor 세 곳에만 부여하고 나머지는 사설망 전용으로 뒀습니다.
+
+### 그래서 직접 만난 문제들
+
+- NHN Cloud의 Floating IP는 인스턴스 NIC에만 붙는데, MetalLB의 가상 IP는 어디에도 속하지 않아 연결 방법이 없었습니다
+- 같은 VPC 안에서는 서로의 Floating IP로 통신이 안 되는 Hairpin NAT 구조였습니다
+- Prometheus TSDB는 NFS를 공식 미지원인데, 클러스터의 유일한 StorageClass가 NFS였습니다
+- NHN Cloud 보안 그룹 콘솔에는 IP-in-IP 프로토콜 옵션이 없어 Calico를 IPIP에서 VXLAN으로 바꿔야 했습니다
+
+이 문제들은 관리형 서비스를 썼다면 만나지 않았을 것들입니다. 편한 길을 의도적으로 가지 않은 것이 이 프로젝트의 내용 대부분을 만들었습니다.
+
+---
+
+## 기술 스택
+
+| 계층              | 구성                                                                                     | 설치 방식                    |
+| ----------------- | ---------------------------------------------------------------------------------------- | ---------------------------- |
+| 클러스터          | Kubernetes v1.35 (kubeadm), Worker 3대 + Control Plane 1대                               | 직접 구축                    |
+| CNI               | Calico v3.32 (VXLAN — IPIP는 SG 제약으로 불가)                                           | 공식 매니페스트              |
+| 로드밸런서        | MetalLB (L2 모드)                                                                        | Helm                         |
+| Ingress           | Ingress-NGINX v1.15.1 (Control Plane 고정 배치)                                          | Helm                         |
+| 스토리지          | NFS 전용 인스턴스 + `nfs-subdir-external-provisioner`                                    | Helm                         |
+| 애플리케이션      | Python 3.12, FastAPI 0.115 / Pillow 11.1, PostgreSQL(StatefulSet), Redis, RabbitMQ       | 자체 작성 Helm 차트 + ArgoCD |
+| 인스턴스          | 7대 — Bastion `m2.c1m2`(1vCPU/2GB·HDD 20GB), 나머지 6대 `m2.c2m4`(2vCPU/4GB·SSD 40~50GB) | NHN Cloud 직접 생성          |
+| 이미지 레지스트리 | Harbor v2.13 (전용 인스턴스, 전용 SG/키페어)                                             | Docker Compose               |
+| 시크릿 관리       | OpenBao + External Secrets Operator                                                      | Helm                         |
+| GitOps            | ArgoCD (Auto-sync + Self-heal + Prune)                                                   | 공식 매니페스트              |
+| 관측성            | kube-prometheus-stack, postgres_exporter, Grafana                                        | Helm                         |
+| 부하 도구         | Locust 2.46                                                                              | venv                         |
+
+### 설치 방식을 통일하지 않은 이유
+
+컴포넌트마다 설치 방식이 다른 건 임의가 아니라 세 가지 원칙에 따른 것입니다.
+
+1. 공식 1순위 경로를 따른다 — ArgoCD·Calico는 공식 매니페스트, Helm 차트를 공식 제공하면 Helm
+2. "배포 대상 앱"과 "배포를 수행하는 도구"를 구분한다 — 앱만 ArgoCD가 관리하고, 운영 도구는 관리 밖에 둡니다
+3. 관리형 서비스는 의도적으로 쓰지 않는다
+
+---
+
+## GitOps 파이프라인
 
 ```
-bash demo/reset_demo_data.sh
+로컬 Helm 차트 수정 → git push → ArgoCD가 main 브랜치 감지 → 자동 Sync → 클러스터 반영
 ```
 
-Postgres 테이블만 `TRUNCATE ... RESTART IDENTITY`하고 Redis 캐시·MinIO에 쌓인 이미지를 지우는
-스크립트로, 스택 재기동 없이 몇 초 안에 끝납니다 (자세한 내용은 [demo/README.md](./demo/README.md)).
+- ArgoCD Application 1개가 umbrella Helm 차트 전체(리소스 23개)를 관리합니다
+- 컨테이너 이미지는 Harbor(사설 레지스트리), Helm 차트 소스는 Git에 둡니다 — 차트를 Harbor OCI에 두면 `helm package` + `helm push` 스텝이 CI에 추가로 필요해 "Git이 유일한 진실"에서 벗어나기 때문입니다
 
-## Web UI 데모 강화 기능
+### 검증한 것
 
-스펙 14번 항목 최소 요구사항 위에, 발표 효과를 위해 아래 기능을 추가했습니다.
+| 항목                 | 결과                                                            |
+| -------------------- | --------------------------------------------------------------- |
+| Git 변경 → 자동 반영 | `values.yaml` push만으로 커밋 해시 자동 갱신 및 Deployment 반영 |
+| Self-heal            | `kubectl set image`로 수동 변경 → 수 초 내 Git 선언값으로 원복  |
+| 배포 이력            | Sync 이력이 커밋 해시·시각과 함께 기록, Rollback 버튼 존재      |
 
-- **이미지 확대 모달**: 구매자 화면에서 카드를 클릭하면 모달이 뜨고, 상단 탭(썸네일/상세/확대)으로
-  3가지 리사이징 사이즈를 전환해볼 수 있습니다. 사이즈를 바꿀 때마다 실제 픽셀 크기
-  (`naturalWidth`/`naturalHeight`)와 실제 파일 용량(HTTP `Content-Length`)을 함께 보여줘서, Image
-  Processing Service가 실제로 리사이징했다는 근거를 발표 중 바로 확인할 수 있습니다.
-- **상품 설명 표시**: 구매자 카드에 등록 시 입력한 설명을 2줄까지 표시합니다 (넘치면 말줄임).
-- **반려 사유 표시**: 판매자 목록에서 `rejected` 상품은 배지 아래에 반려 사유를 텍스트로 바로
-  보여줍니다 (hover 툴팁이 아니라 항상 보이는 텍스트라 발표 중 놓치지 않습니다).
-- **처리 중 배지 펄스 애니메이션**: `processing` 배지가 1.4초 주기로 은은하게 깜빡여, 지금 무엇이
-  처리되고 있는지 목록에서 더 잘 드러납니다.
-- **판매자 목록은 서버에서 직접 조회**: 브라우저 세션에 등록 이력을 들고 있지 않고,
-  `GET /products?status=all`(아래 "API 추가 사항" 참고)을 2.5초마다 폴링해서 그립니다. 이
-  브라우저의 폼으로 등록했든 `demo/run_demo.sh` 같은 외부 스크립트로 등록했든 전부 목록에
-  나타납니다.
+### 부수 학습 — 롤백조차 Git을 거친다
 
-### API 추가 사항 (스펙 대비)
+Auto-sync가 켜진 상태에서는 UI의 Rollback 버튼을 눌러도 Git이 최신이므로 Self-heal이 즉시 되돌립니다. 실제 롤백은 `git revert` 후 push가 정공법이며, GitOps에서는 롤백조차 Git을 거치도록 구조적으로 강제됩니다.
 
-스펙 7번 항목에 정의된 API에 더해, 발표용 Web UI를 위해 아래를 추가했습니다. 기존 엔드포인트의
-기본 동작은 전혀 바뀌지 않았습니다.
+---
 
-- `GET /products?status=all` — 상태(`draft`/`processing`/`active`/`rejected`) 무관하게 모든
-  상품을 최신 등록순으로 반환합니다. 판매자 화면이 등록 경로와 무관하게 상태 전이를 실시간으로
-  보여주려면 전체 상품 목록 조회가 필요해서 추가했습니다. 캐싱하지 않으며, 파라미터를 생략하면
-  (`GET /products`) 기존과 동일하게 `active` 상품만 반환하고 Redis 캐시도 그대로 사용합니다
-  (스펙 4번 항목 요구사항에 영향 없음).
+## 메시지 파이프라인의 신뢰성 설계
 
-### Image Processing Service 헬스 체크 (스펙 대비 추가)
+인프라가 복구돼도 처리 중이던 메시지가 사라지면 의미가 없습니다. 큐 계층에서 어디까지 보장하고 어디부터는 보장하지 않는지를 명시합니다.
 
-스펙 7번 항목의 `GET /health`는 Product Service 전용으로 명시되어 있고, Image Processing
-Service는 HTTP 서버 없이 순수 RabbitMQ 컨슈머 루프로만 동작합니다. 그래서 K8s
-Liveness/Readiness Probe에 쓸 HTTP 엔드포인트가 애초에 없는데, 향후 실제 K8s 배포 단계에서
-연결 상태를 확인할 수단이 필요해 파일 기반 heartbeat를 추가했습니다.
+| 무엇을                  | 어떻게                                                 | 그래서 무엇이 보장되나                                   |
+| ----------------------- | ------------------------------------------------------ | -------------------------------------------------------- |
+| 큐를 디스크에 저장      | `queue_declare(durable=True)`                          | RabbitMQ가 재시작해도 큐가 사라지지 않음                 |
+| 메시지를 디스크에 저장  | `delivery_mode=2`                                      | 큐 안에 쌓여 있던 작업도 함께 살아남음                   |
+| 처리 후에만 완료 처리   | 수동 ack, 한 번에 1건씩                                | 처리 도중 컨슈머가 죽으면 그 작업이 다시 큐로 돌아감     |
+| 실패한 작업 격리        | 재시도 횟수를 메시지에 기록, 3회 넘으면 별도 큐로 이동 | 계속 실패하는 작업 하나가 뒤의 정상 작업을 막지 않음     |
+| (미적용) 발행 성공 확인 | Publisher Confirm 미사용                               | ⚠️ 메시지를 보낸 직후 브로커가 죽는 순간은 방어하지 못함 |
 
-- `queue_consumer.py`의 `connect_with_retry()`가 RabbitMQ 연결에 성공하는 즉시, 그리고
-  consumer 루프가 살아있는 동안(메시지 처리 시마다 + 유휴 상태에서도 30초 주기로)
-  `RABBITMQ_HEALTH_FILE`(기본값 `/tmp/healthy`)을 touch합니다.
-- 연결이 끊겨 재시도만 반복 중일 때는 이 파일이 갱신되지 않으므로, K8s `exec` probe에서
-  `find /tmp/healthy -mmin -1` 같은 명령으로 mtime 신선도를 확인하면 연결 상태를 판단할 수
-  있습니다 (아직 매니페스트 자체는 범위 밖 — 배포 단계에서 추가 예정).
+용어를 풀면 이렇습니다.
 
-### Image Processing Service RabbitMQ 런타임 재연결
+- **큐를 디스크에 저장한다**는 건, RabbitMQ Pod가 재시작돼도 처리 대기 중이던 상품이 그대로 남아 있다는 뜻입니다. 이게 없으면 등록은 됐는데 아무 일도 일어나지 않는 상품이 생깁니다.
+- **수동 ack**는 "다 처리했다"고 컨슈머가 직접 알려주는 방식입니다. 자동으로 처리하면 메시지를 받자마자 완료로 간주하므로, 처리 중에 죽으면 그 작업이 사라집니다.
+- **실패 작업 격리**는 깨진 이미지처럼 몇 번을 다시 시도해도 실패하는 작업을 따로 치워두는 장치입니다. 안 그러면 그 하나가 계속 재시도되면서 뒤에 줄 선 정상 작업들이 처리되지 못합니다.
 
-스펙 9번 항목은 "DB/Redis/RabbitMQ 연결 재시도는 기동 시점뿐 아니라 실행 중에도 적용되어야
-한다"고 명시합니다. 기존 구현은 시작 시 `connect_with_retry()`로 최초 연결만 재시도했고,
-컨슘 도중 연결이 끊기면 예외가 그대로 전파되어 프로세스가 죽는 구조였습니다(재시작은
-K8s가 대신 해주지만, "실행 중 끊김 → 재연결"이라는 스펙 의도와는 달랐습니다).
+### 어디까지 보장하고, 어디부터는 안 하는가
 
-`image-processing-service/main.py`의 `main()`을 아래처럼 바꿔 이 요구사항을 충족시켰습니다.
+한 번 보낸 작업은 최소 한 번은 처리된다 — 여기까지가 보장 범위입니다. 다만 완전한 보장은 아닙니다. 메시지를 보낸 직후 RabbitMQ가 죽는 아주 짧은 순간은 막지 못합니다. 이걸 막으려면 발행 성공을 매번 확인받는 설정이 필요한데, 넣지 않았습니다.
 
-- `connect_with_retry()` 호출 + `run_consumer()` 실행을 `while not shutdown_requested:`
-  루프로 감쌌습니다.
-- `run_consumer()`가 RabbitMQ 연결 관련 예외(`pika.exceptions.AMQPConnectionError`,
-  `OSError` — `connect_with_retry()`가 이미 잡는 것과 동일한 예외군)를 던지면 프로세스를
-  죽이지 않고 로그만 남긴 뒤 루프 최상단에서 `connect_with_retry()`를 다시 호출해 지수
-  백오프 재연결 후 컨슘을 재개합니다(백오프 로직 자체는 새로 만들지 않고 기존
-  `connect_with_retry()`를 그대로 재사용).
-- `SIGTERM`/`SIGINT`로 인한 정상 종료는 `run_consumer()`가 예외 없이 리턴하므로 구분됩니다 —
-  이때는 재연결 루프로 돌아가지 않고 `shutdown_requested` 플래그로 while을 빠져나갑니다.
-  시그널 핸들러는 재연결마다 바뀌는 현재 channel을 클로저 변수(`current_channel`)로 참조해
-  `stop_consuming()`을 호출합니다.
+이 한계를 알면서 넘어간 이유는 큐의 역할 때문입니다. 여기서 큐는 결제나 정산처럼 한 건도 틀리면 안 되는 흐름이 아니라, 이미지 처리를 사용자 응답과 분리하기 위한 장치입니다. 최악의 경우 상품 하나가 `draft`에 남고, 그건 재등록으로 복구됩니다.
 
-## ⚠️ 빌드 시 주의사항 (Dockerfile)
+### 실패 처리를 직접 구현한 이유
 
-- **빌드 컨텍스트는 리포지토리 루트여야 합니다.** `product-service/Dockerfile`은 `run_migration.py`
-  실행을 위해 `/migrations`를, `image-processing-service/Dockerfile`은 `cleanup_temp_images.py`
-  실행을 위해 `/scripts`를 함께 이미지에 담습니다. 예:
-  ```
-  docker build -f product-service/Dockerfile -t product-service:latest .
-  docker build -f image-processing-service/Dockerfile -t image-processing-service:latest .
-  docker build -f web-ui/Dockerfile -t web-ui:latest ./web-ui
-  ```
-- **타겟 아키텍처 주의**: NHN Cloud 인스턴스는 x86_64(amd64) 기준입니다. Apple Silicon(M1/M2/M3,
-  arm64) 노트북 등에서 빌드할 경우 반드시 플랫폼을 명시해야 합니다. 그렇지 않으면 클러스터에서
-  `exec format error`로 컨테이너 실행 자체가 되지 않습니다.
-  ```
-  docker build --platform linux/amd64 -f product-service/Dockerfile -t product-service:latest .
-  ```
-- **`web-ui`는 K8s용 nginx 설정을 기본으로 빌드합니다.** `web-ui/Dockerfile`은
-  `web-ui/nginx.conf`가 아니라 `web-ui/nginx.k8s.conf`(product-service로의 `/products`
-  proxy_pass 블록이 빠진 버전, 실배포에서는 Ingress가 그 역할을 대신함)를
-  이미지의 `/etc/nginx/conf.d/default.conf`로 복사합니다. 빌드 커맨드 자체는
-  동일합니다 — `docker build -f web-ui/Dockerfile -t web-ui:latest ./web-ui`.
-  로컬 `docker-compose`에서는 `web-ui` 서비스에 `volumes`로 기존 `nginx.conf`를
-  런타임에 덮어 마운트해 `/products` 프록시 동작을 그대로 유지합니다.
+RabbitMQ에는 실패한 메시지를 자동으로 격리해주는 기능이 있습니다. 그런데 이 프로젝트는 그걸 쓰지 않고 직접 구현했습니다.
 
-## 환경변수
+이유는 **재시도 횟수를 세기 위해서**입니다. RabbitMQ 기본 방식은 실패한 메시지를 큐에 도로 넣기만 하고, 그게 몇 번째 시도인지는 남기지 않습니다. 그래서 같은 작업이 무한히 반복될 수 있습니다. 대신 메시지에 "지금 몇 번째 시도"라는 표시를 달아서 다시 넣으면, 3번을 넘겼을 때 격리 큐로 보낼 수 있습니다.
 
-애플리케이션 코드가 직접 읽는 변수(각 서비스 컨테이너에 주입됨):
+### 연결 끊김에 대한 방어 — 실측으로 검증된 부분
 
-| 변수명                      | 설명                                | 사용 서비스                              |
-| --------------------------- | ----------------------------------- | ----------------------------------------- |
-| `DATABASE_URL`              | PostgreSQL 연결 문자열              | Product Service, Image Processing Service |
-| `REDIS_URL`                 | Redis 연결 문자열                   | Product Service                           |
-| `RABBITMQ_URL`              | RabbitMQ 연결 문자열                | Product Service, Image Processing Service |
-| `OBJECT_STORAGE_ENDPOINT`   | NHN Cloud Object Storage 엔드포인트 | Product Service, Image Processing Service |
-| `OBJECT_STORAGE_ACCESS_KEY` | 접근 키                             | Product Service, Image Processing Service |
-| `OBJECT_STORAGE_SECRET_KEY` | 시크릿 키                           | Product Service, Image Processing Service |
-| `OBJECT_STORAGE_BUCKET`     | 버킷 이름                           | Product Service, Image Processing Service |
-| `OBJECT_STORAGE_PUBLIC_URL` | 브라우저가 접근하는 공개 이미지 URL (로컬 전용, 미설정 시 `OBJECT_STORAGE_ENDPOINT` 사용) | Image Processing Service |
-| `OBJECT_STORAGE_ACCOUNT_ID` | NHN Cloud Object Storage 계정 ID. 설정 시 공개 URL이 `/v1/AUTH_<값>/<버킷>/<key>` 형식이 됨 (선택, 로컬 MinIO는 이 경로 구조가 없으므로 미설정) | Image Processing Service |
-| `RABBITMQ_HEALTH_FILE` | RabbitMQ 연결 상태 heartbeat 파일 경로 (선택, 미설정 시 `/tmp/healthy`) | Image Processing Service |
+두 서비스 모두 DB·RabbitMQ 연결에 지수 백오프 재시도를 넣었습니다(초기 2초, ×2 증가, 최대 60초 캡, 10회).
 
-모든 값은 코드에 하드코딩되어 있지 않으며 환경변수로만 주입됩니다 (추후 K8s Secret/OpenBao 연동 예정).
+#### 이 로직이 들어간 경위
 
-위 값들의 실제 출처(자격증명)는 루트의 `.env` 파일이며, `docker-compose.yml`이 `${VAR}` 치환으로
-읽어 각 서비스의 연결 문자열을 조합합니다. `.env`는 git에 커밋하지 않고, 필요한 변수 목록은
-[`.env.example`](./.env.example)로 관리합니다.
+처음부터 있던 게 아닙니다. Helm 차트의 Liveness Probe를 설계하다 코드를 확인해보니, 컨슈머 실행 중 연결이 끊기면 재시도 없이 예외가 전파되어 프로세스가 그냥 종료되는 구조였습니다. K8s가 재시작은 해주지만 `CrashLoopBackOff` 백오프가 누적되면 복구 시간이 실제보다 나쁘게 측정되므로, 재연결 루프를 넣도록 수정했습니다.
 
-| 변수명                 | 설명                              |
-| ----------------------- | --------------------------------- |
-| `POSTGRES_DB`           | PostgreSQL 데이터베이스 이름      |
-| `POSTGRES_USER`         | PostgreSQL 계정                   |
-| `POSTGRES_PASSWORD`     | PostgreSQL 비밀번호               |
-| `RABBITMQ_USER`         | RabbitMQ 계정 (guest 대체)        |
-| `RABBITMQ_PASSWORD`     | RabbitMQ 비밀번호                 |
-| `MINIO_ROOT_USER`       | MinIO 루트 계정 (로컬 Object Storage 대체) |
-| `MINIO_ROOT_PASSWORD`   | MinIO 루트 비밀번호               |
-| `OBJECT_STORAGE_BUCKET` | MinIO/Object Storage 버킷 이름    |
+#### 실제로 두 번 검증됨
 
-## 알려진 기술 부채 및 향후 확장 방향
+- 상품 등록 도중 `ConnectionResetError` 발생 → 자체 재연결로 복구해 정상 처리 완료
+- Pod 재시작 직후 `Connection refused` 약 1분 반복 → 백오프(2s→4s→8s→16s→32s) 후 `rabbitmq_connected` / `consumer_started` 복구
 
-현재 Product Service와 Image Processing Service는 PostgreSQL을 공유하고 있어 완전한 서비스
-독립성이 확보되지 않았습니다 (분산 모놀리스에 가까운 상태). 이는 1주일이라는 프로젝트 기간
-제약 속에서 서비스 경계(코드/배포 단위) 분리를 우선하고, 데이터 분리는 다음 단계 과제로 남긴
-의도적인 선택입니다. 향후 계획은 Image Processing Service 전용 DB를 분리하고, 처리 완료 시
-이벤트(`{ event: "image_processed", product_id, result, reason }`)를 발행해 Product Service가
-이를 구독하여 자신의 DB 상태를 갱신하는 Choreography 패턴으로 전환하는 것입니다.
+> `GET /health`는 이 재시도 경로를 타지 않습니다. `connect_timeout=2`로 1회만 확인합니다. Probe가 재시도 루프에 들어가면 DB 장애 시 헬스체크가 수 분간 블로킹되어 Probe 자체가 무의미해지기 때문입니다.
 
-이 마이그레이션을 쉽게 하기 위해 지금부터 지키고 있는 원칙:
+---
 
-- Image Processing Service가 `products` 상태를 변경하는 코드는 `db.py`의
-  `update_product_status(product_id, status, reason=None)` 함수 하나로만 캡슐화되어 있습니다.
-  나중에 이 함수 내부만 이벤트 발행으로 교체하면 됩니다.
-- 각 서비스 `models.py` 상단에 테이블 소유권을 주석으로 명시했습니다 (`products`는 Product
-  Service 소유, `product_images`는 Image Processing Service 소유).
-- Product Service는 `product_images` 테이블에 쓰기 작업을 하지 않고, 상세/목록 조회 시
-  읽기(JOIN)만 수행합니다.
-- `image-processing-service/processor.py`의 룰 기반 검수 통과 직후 지점에, 향후 비전 LLM API를
-  붙일 수 있는 위치를 TODO 주석으로 표시해뒀습니다 (스펙 13번 항목에 따라 실제 호출 구현은 하지
-  않음 — 연동 지점만 표시).
+## 장애 실험 결과
 
-## 완료 기준 검증 결과
+계획한 4개 시나리오 중 2개를 실행했습니다. 나머지 2개를 제외한 판단 근거는 아래 "알려진 한계"에 있습니다.
 
-`docker compose up --build`로 실제 스택을 띄우고 아래 항목을 직접 검증했습니다 (2026-07-31,
-이후 기능 추가분에 대한 재검증 포함). 실행 명령과 재현 절차는 [TESTING.md](./TESTING.md)에
-더 자세히 정리되어 있습니다.
+### 시나리오 1 — Pod Kill
 
-| # | 항목 | 결과 |
-|---|------|------|
-| 1 | `docker-compose up`으로 전체(Product/Image Processing/DB/Redis/RabbitMQ/MinIO/Web UI) 기동 | ✅ PASS |
-| 2 | 이미지 업로드 후 `GET /products/{id}`가 `active`로 전환 | ✅ PASS — 1200x1200, ~10.5MB 이미지 모두 정상 전환, 3종 리사이징 URL 생성 확인 |
-| 3 | 저해상도 이미지 업로드 시 `rejected` | ✅ PASS — 100x100 이미지 → `rejection_reason`에 미달 사유 기록됨 |
-| 4 | `GET /products`가 `active` 상품만 반환 | ✅ PASS — draft/processing/rejected 상품은 제외됨 |
-| 5 | 20MB 초과 `413`, 15MB 이하 정상 처리 | ✅ PASS — 21MB → 413, ~10.5MB → 202 후 active |
-| 6 | 처리 완료(active/rejected 무관) 후 `temp/` 원본 삭제 | ✅ PASS — MinIO `temp/` 접두사가 두 케이스 모두에서 비워짐 확인 |
-| 7 | Image Processing Service 강제 종료 시 처리 중이던 메시지 재큐잉 | ✅ PASS — `SIGKILL` 후 RabbitMQ가 unacked 메시지를 자동으로 `ready` 상태로 되돌림, 재기동 후 정상 처리됨 |
-| 8 | DB를 내렸다 올렸을 때 크래시 없이 재연결 | ✅ PASS — Postgres 중지 중에도 두 서비스 모두 크래시하지 않음, 재기동 후 대기 중이던 요청/메시지가 자동 처리됨 |
-| 9 | `run_migration.py` 재실행 안전성 | ✅ PASS — 동일 스키마로 2회 연속 실행, 에러 없이 종료 |
-| 10 | `cleanup_temp_images.py`가 24시간 이상 지난 파일만 삭제 | ✅ PASS — 기본 24시간 기준으로 최근 파일은 보존됨을 확인했고, cutoff 값을 임시로 낮춰 재실행한 별도 검증으로 "기준 초과 시 실제 삭제"까지 확인 (LastModified 비교 및 실제 delete_object 호출 검증) |
-| 11 | Web UI 폴링으로 `draft → processing → active` 실시간 갱신 | ✅ PASS — 사용자가 실제 브라우저(`http://localhost:8080`)에서 확인. `demo/run_demo.sh`로 재현 시 판매자 목록 배지가 큐 처리 순서대로 실시간으로 바뀜 |
-| 12 | 상태별 배지 색상 / 로딩 상태 / 성공 토스트 | ✅ PASS — 사용자가 실제 브라우저에서 확인. 추가로 반려 사유 텍스트 표시, `processing` 배지 펄스 애니메이션까지 반영 |
-| 13 | 구매자 화면에서 `active` 상품만 카드로 표시 | ✅ PASS — 사용자가 실제 브라우저에서 확인 (진행 중 MinIO 내부 호스트명 문제로 썸네일이 깨졌던 것을 발견해 `OBJECT_STORAGE_PUBLIC_URL` 분리로 수정) |
-| 14 | Product Service 코드 어디에도 `product_images` 쓰기 없음 | ✅ PASS — `grep`으로 `product-service/` 전체를 검사해 INSERT/UPDATE가 없음을 확인 (읽기 SELECT만 존재) |
-| 15 | README에 "알려진 기술 부채" 섹션 포함 | ✅ PASS — 본 문서의 "알려진 기술 부채 및 향후 확장 방향" 섹션 |
+`product-service` Pod를 강제 종료하고 복구까지의 시간을 초 단위로 추적했습니다.
 
-### 검증 중 발견해 수정한 버그
+| 시각     | 일어난 일                                  |
+| -------- | ------------------------------------------ |
+| 0s       | Pod 생성 → `Pending` → `ContainerCreating` |
+| 1s       | 컨테이너 프로세스 시작                     |
+| 1s ~ 11s | `initialDelaySeconds: 10` 대기             |
+| 12s      | 첫 Readiness Probe 통과 → `Ready` (MTTR)   |
 
-- **`/health`가 DB 장애 시 최대 6분까지 응답을 블로킹하는 문제**: Postgres를 내린 뒤 `/health`를
-  호출했더니 응답이 없어 조사한 결과, DB 접근 캡슐화 모듈(`db.py`)의 재연결 재시도(최대 10회,
-  백오프 최대 60초)가 헬스체크 경로에도 그대로 적용되고 있었습니다. K8s Liveness/Readiness
-  Probe는 빠른 실패가 필요하므로, `product-service/db.py`와 `product-service/cache.py`의
-  `health_check()`를 재시도 로직과 분리해 짧은 타임아웃(2초)으로 1회만 확인하도록 수정했습니다.
-  일반 요청 경로(상품 등록/조회)의 재연결 재시도 로직은 스펙 의도대로 그대로 유지했습니다.
-- **동시 요청 중 하나가 블로킹되면 서버 전체가 멈추는 문제**: 위 수정 후에도, Web UI가
-  폴링하는 `GET /products?status=all` 요청이 DB 재연결 재시도에 걸리는 동안 `/health`를
-  포함한 다른 모든 요청까지 같이 멈추는 걸 재발견했습니다. 원인은 `main.py`의 `async def`
-  라우트 핸들러 안에서 동기(blocking) DB/Redis/RabbitMQ 호출을 `await` 없이 직접 실행해,
-  블로킹되는 동안 uvicorn의 단일 이벤트 루프 자체가 멈춰버린 것이었습니다.
-  `create_product`는 내부 블로킹 호출을 `starlette.concurrency.run_in_threadpool`로 감싸고,
-  `list_products`/`get_product`/`health`는 일반 `def`로 바꿔(FastAPI가 자동으로 스레드풀에서
-  실행) 해결했습니다. 재현/검증 절차는 [TESTING.md](./TESTING.md#5-2-동시-요청이-하나라도-블로킹되면-전체-이벤트-루프가-멈추는-문제-2차-발견) 참고.
+![Pod Kill MTTR 12초의 내역](./docs/pod_kill_mttr_timeline.svg)
+
+#### 이 분해에서 나온 결론
+
+컨테이너가 뜨는 데는 1초, 나머지 11초는 전부 Probe 대기였습니다.
+
+이 분해가 중요한 이유는 "복구 시간을 줄이려면 뭘 바꾸나"의 답이 달라지기 때문입니다. 기동이 느렸다면 이미지나 노드를 손봐야 하지만, 실제 병목은 제가 Helm 차트에 직접 써넣은 설정값이었습니다. 즉 복구 시간의 주도권은 Kubernetes가 아니라 운영자에게 있었습니다.
+
+#### 부수 확인
+
+이미지 pull 76ms(Harbor 사설망), Anti-Affinity로 두 Replica가 서로 다른 노드에 분산, `curl` 21회 연속 `200`으로 무중단 확인.
+
+### 시나리오 4 — CPU Stress → HPA
+
+| 시도 | 부하     | CPU    | Replicas | 결과                     |
+| ---- | -------- | ------ | -------- | ------------------------ |
+| 1차  | 100 유저 | 21~23% | 2        | 미발동                   |
+| 2차  | 400 유저 | 62~66% | 2        | 미발동 — 임계값 70% 직전 |
+| 3차  | 800 유저 | 84~91% | 2 → 3    | 스케일아웃               |
+
+2차 시도가 이 실험에서 가장 유용한 데이터였습니다. 부하를 4배로 올렸는데도 66%에서 멈춰 아무 일도 일어나지 않았고, 이는 "HPA는 임계값을 넘어야만 동작한다" 를 실측으로 보여줍니다. 한 번에 성공했다면 얻지 못했을 관찰입니다.
+
+#### 결과
+
+스케일아웃 이후 CPU가 68~72%로 하강해 늘어난 Pod가 실제로 부하를 나눠 받았음이 확인됐고, 전체 45,898요청 중 실패는 0건이었습니다.
+
+#### 추가로 확인한 것 — HPA 퍼센트의 기준
+
+HPA의 `averageUtilization`은 `limits`가 아니라 `requests` 기준입니다. CPU 91%일 때 실사용은 91m로 `limits`(250m)의 36%에 불과했고, 따라서 스로틀링이 발생하기 한참 전에 HPA가 먼저 확장했습니다.
+
+---
+
+## 트러블슈팅 (전체 기록 중 3건)
+
+### 1. NIC 하나를 추가했더니 클러스터 DNS가 마비됨
+
+MetalLB의 가상 IP에 Floating IP를 붙일 방법이 없어, 사설 IP를 수동 지정한 NIC를 만들어 Control Plane에 추가했습니다.
+
+그러자 클러스터 전체 DNS가 죽었습니다.
+
+원인은 Calico가 새로 생긴 `eth1`을 노드 IP로 잘못 인식해 BGP 피어링이 전면 단절된 것이었습니다. `IP_AUTODETECTION_METHOD=interface=eth0`으로 해결했습니다.
+
+인프라 계층의 작은 변경이 전혀 다른 계층으로 번지는 걸 직접 겪은 사례입니다.
+
+### 2. "ArgoCD가 되돌렸다"는 오진
+
+Git에서 replica를 2→3으로 올렸는데 수 초 뒤 2로 돌아갔습니다. 처음엔 ArgoCD Self-heal 때문이라고 판단했지만, `kubectl describe hpa`의 Events에는 `SuccessfulRescale ... All metrics below target`이 찍혀 있었습니다 — 실제로는 HPA의 정상적인 스케일 다운이었습니다.
+
+문제의 본질은 "누가 되돌렸나"가 아니라 `replicas` 필드를 ArgoCD와 HPA가 동시에 소유하려는 구조였습니다. `ignoreDifferences`로 해결했는데, 여기서 한 번 더 틀렸습니다 — `RespectIgnoreDifferences=true`를 같이 넣지 않으면 diff 판정에서만 빠지고 Sync 때는 Git 값이 재적용되어 반쪽 해결이 됩니다.
+
+> 같은 종류의 문제를 4단계에서 또 만났습니다. Calico가 Tigera Operator가 아닌 공식 매니페스트로 설치돼 있어서 DaemonSet을 직접 고칠 수 있었는데, Operator 방식이었다면 Operator가 원복했을 것입니다. 도구도 단계도 달랐지만 "이 리소스의 소유자가 누구인가"라는 같은 문제였습니다.
+
+### 3. 설정을 넣었는데 읽지를 않았다
+
+Worker에서 `ImagePullBackOff`가 났고 에러는 `dial tcp <Harbor>:443: i/o timeout`이었습니다. HTTP뿐인 Harbor에 containerd가 HTTPS로 붙는 상황이라 `certs.d/hosts.toml`을 만들었는데, 여전히 443으로 시도했습니다.
+
+근본 원인은 containerd의 `config_path`가 기본값인 빈 문자열이라 `certs.d` 폴더를 아예 읽지 않고 있었던 것이었습니다.
+
+이걸 고치자 이번엔 포트만 80으로 바뀐 같은 에러가 났습니다 — Hairpin NAT였습니다. 그리고 여기도 한 겹 더 있었습니다. 이미지를 사설 IP로 재푸시해도 안 됐는데, Harbor가 토큰 발급 시 `harbor.yml`의 `hostname` 값을 realm 헤더로 그대로 안내하기 때문이었습니다. `hostname`을 `harbor.jypjt.local`로 바꿔 해결했습니다.
+
+#### 배운 것
+
+설정이 안 먹으면 그 설정을 읽고 있는지부터 확인해야 합니다. 그리고 에러가 미묘하게 바뀌었다면(443→80) 첫 번째 문제는 해결됐고 두 번째가 드러난 것입니다.
+
+---
+
+## 의사결정 기록
+
+모든 주요 선택을 A안/B안 비교 + 채택 근거 + 기각 사유 형식으로 40건 남겼습니다. 결정을 바꾼 경우 바꾼 이유까지 기록했습니다.
+
+### 대표 사례
+
+| #   | 결정                                         | 요지                                                                                    |
+| --- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| #2  | MSA-lite 채택                                | 서비스는 분리, DB는 공유. 경계를 먼저 긋고 저장소는 나중에 나누는 순서                  |
+| #18 | Helm 차트를 Harbor OCI → Git 경로로 변경     | CI 자동화 확장성을 기준으로 재평가한 결과                                               |
+| #31 | Ingress를 Control Plane에 고정               | "죽으면 자동 복구 안 됨"이라는 트레이드오프를, 장애 실험 대상이 아닌 노드에 몰아서 감수 |
+| #33 | HPA `replicas`를 ArgoCD diff에서 제외        | 두 자동화의 필드 소유권 충돌 해소                                                       |
+| #36 | Prometheus를 `emptyDir` + Control Plane 고정 | NFS 미지원 회피 + 관측자와 피관측자 분리                                                |
+| #40 | 장애 시나리오 4개 → 2개                      | 복구/확장이라는 다른 축을 하나씩 증명하는 조합 선택                                     |
+
+전체 기록: [`k8s_portfolio_roadmap.md`](./docs/k8s_portfolio_roadmap.md)
+
+---
+
+## 알려진 한계
+
+숨기지 않고 적습니다. 어디까지 검증했고 어디부터는 설계뿐인지를 구분하는 것이 이 문서의 목적입니다.
+
+### 검증하지 못한 것
+
+| 항목                          | 상태                     | 사유                                                                              |
+| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------- |
+| PDB(PodDisruptionBudget) 효과 | 설계만 적용, 동작 미확인 | Node Failure 시나리오 미실행                                                      |
+| Memory Limit 타당성           | 계산 근거만 있음         | OOMKilled 시나리오 미실행                                                         |
+| HPA 반응 시간 / 스케일인      | 미측정                   | 실험 설계 미흡 — 부하 규모를 사전 산정하지 않고 3회 재시도하며 기준 시각이 흐려짐 |
+
+앞의 두 개는 판단해서 안 한 것이고(결정 #40), 마지막 하나는 놓친 것입니다. 둘은 다르므로 구분해서 적습니다.
+
+### 인지하고 있는 기술 부채
+
+| 항목                             | 다음 단계                                                                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| DB 공유 (분산 모놀리스 리스크)   | DB 분리 + 이벤트 기반 상태 동기화                                                                                                |
+| NFS 단일 장애점                  | Longhorn 전환 (Worker 3대 구성은 이미 이를 염두에 둠)                                                                            |
+| OpenBao Auto-unseal 미적용       | 재시작마다 수동 unseal 필요. 외부 KMS 연동으로 해소                                                                              |
+| TLS/HTTPS 미적용                 | `cert-manager` + 자체 서명 인증서                                                                                                |
+| Alertmanager 미연동              | 기본 룰은 이미 포함되어 있어 Webhook 등록 20~30분으로 복구 가능                                                                  |
+| CI 파이프라인 부재               | GitHub Actions. 차트를 Git에 둔 것(#18)이 이를 위한 준비                                                                         |
+| Network Policy 미적용            | 서비스별 최소 통신 경로 제한                                                                                                     |
+| 클러스터 밖 서버가 관측 사각지대 | node-exporter가 DaemonSet이라 K8s 노드 4대만 수집됩니다. PostgreSQL 데이터가 저장되는 NFS 서버의 디스크 포화는 탐지되지 않습니다 |
+
+---
+
+## 저장소 구조
+
+```
+├── charts/jypjt/                 # 애플리케이션 umbrella Helm 차트 (ArgoCD가 참조하는 경로)
+│                                 #   Chart.yaml, values.yaml, templates/
+├── argocd/                       # ArgoCD Application 정의 (차트 밖에 위치 — 순환 구조 방지)
+├── manifests/                    # ArgoCD 관리 밖의 운영 도구 설정
+│   ├── ingress-nginx/            #   Ingress-NGINX values
+│   └── monitoring/               #   kube-prometheus-stack values
+├── product-service/              # 상품 등록·조회 API (FastAPI)
+├── image-processing-service/     # 큐 소비, 검수, 리사이징 (Pillow)
+├── web-ui/                       # 시연용 정적 웹 UI (nginx:alpine)
+├── migrations/                   # DB 스키마 (001_init_schema.sql + run_migration.py)
+├── scripts/                      # cleanup_temp_images.py, locustfile.py
+├── demo/
+│   ├── local/                    # 로컬 docker compose 시연 (MinIO 포함)
+│   └── cluster/                  # 실제 NHN Cloud 클러스터 시연 (데이터 초기화 Job)
+└── docs/                         # 로드맵, 회고, 아키텍처 다이어그램 3종
+```
+
+### 설계 의도가 담긴 배치 두 가지
+
+- `argocd/`를 차트 밖에 둔 이유: 차트 안에 넣으면 "이 차트를 배포하라는 지시"가 그 차트 안에 있는 순환 구조가 됩니다.
+- `manifests/`와 `charts/`를 나눈 이유: 앞서 말한 "배포 대상 앱 vs 배포를 수행하는 도구" 구분이 디렉터리 수준에도 반영돼 있습니다. `charts/`는 ArgoCD가 관리하고, `manifests/`는 `helm upgrade`로 직접 적용합니다. 다만 ServiceMonitor만은 예외적으로 `charts/`에 있는데, 그건 "Prometheus 설정"이 아니라 "우리 앱이 무엇을 노출하는가에 대한 선언" 이라 앱의 일부이기 때문입니다.
+
+### 로컬 실행
+
+저장소 루트의 `docker-compose.yml`로 전체 스택(서비스 2종 + PostgreSQL + Redis + RabbitMQ)을 띄울 수 있습니다. `.env.example`을 복사해 Object Storage 자격증명을 채우면 됩니다.
+
+---
+
+## 문서
+
+### 인프라 · 운영 기록
+
+| 문서                                                       | 내용                                                        |
+| ---------------------------------------------------------- | ----------------------------------------------------------- |
+| [로드맵 및 의사결정 기록](./docs/k8s_portfolio_roadmap.md) | 단계별 계획·체크포인트, 의사결정 40건, 트러블슈팅 전체 기록 |
+| [회고 및 장애 분석(RCA)](./docs/retrospective.md)          | 시나리오별 RCA, 정량 지표, 시행착오, 배운 것                |
+| [진행 로그](./docs/project_schedule_log.md)                | 날짜별 실제 작업 기록, 계획 대비 편차                       |
+
+### 애플리케이션 문서
+
+| 문서                                         | 내용                                                  |
+| -------------------------------------------- | ----------------------------------------------------- |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)         | 서비스 간 흐름, 데이터 모델, 테이블 소유권            |
+| [APPLICATION_SPEC.md](./APPLICATION_SPEC.md) | API 스펙, 상태 전이 규칙                              |
+| [RELEASE_NOTES.md](./RELEASE_NOTES.md)       | 이미지 `v0.1.0`~`v0.1.4`, Helm Chart 버전별 변경 내역 |
+| [TESTING.md](./TESTING.md)                   | 테스트 절차                                           |
+| [demo/README.md](./demo/README.md)           | 시연용 데이터 생성 및 초기화                          |
