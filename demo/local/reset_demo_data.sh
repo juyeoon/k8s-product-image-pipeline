@@ -13,7 +13,7 @@
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$DEMO_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DEMO_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "=== 1) Postgres: products / product_images 비우는 중 ==="
@@ -35,4 +35,4 @@ echo "=== 확인: GET /products?status=all ==="
 PRODUCT_SERVICE_URL="${PRODUCT_SERVICE_URL:-http://localhost:8000}"
 curl -s "$PRODUCT_SERVICE_URL/products?status=all"
 echo
-echo "위 결과가 빈 배열([])이면 초기화 완료. 이제 bash demo/run_demo.sh를 실행하면 됩니다."
+echo "위 결과가 빈 배열([])이면 초기화 완료. 이제 bash demo/local/run_demo.sh를 실행하면 됩니다."

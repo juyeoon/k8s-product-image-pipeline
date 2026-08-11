@@ -4,7 +4,7 @@ CLAUDE.md
 claude_code_build_instructions_*.md
 
 # 발표용 데모 이미지 (바이너리, generate_demo_images.py로 재생성 가능)
-demo/images/
+demo/local/images/
 
 # Python
 
@@ -148,7 +148,6 @@ celerybeat.pid
 
 # RabbitMQ
 mnesia/
-rabbitmq/
 rabbitmq-data/
 
 # ActiveMQ

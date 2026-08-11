@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: reset-demo-data-
+  namespace: jypjt
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: reset-demo-data
+          image: harbor.jypjt.local/jypjt/product-service:v0.1.4
+          command: ["python", "/scripts/reset_demo_data.py", "--yes"]
+          envFrom:
+            - secretRef:
+                name: db-credentials
+            - configMapRef:
+                name: app-config
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: reset-demo-script

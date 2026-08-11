@@ -18,7 +18,7 @@ WATCH_SECONDS="${WATCH_SECONDS:-30}"
 
 if [ ! -d "$IMAGES_DIR" ] || [ -z "$(ls -A "$IMAGES_DIR" 2>/dev/null)" ]; then
   echo "데모 이미지가 없습니다. 먼저 아래 명령으로 생성하세요:"
-  echo "  docker run --rm -v \"\$(pwd)/demo:/demo\" k8s-product-image-pipeline-image-processing-service python /demo/generate_demo_images.py"
+  echo "  docker run --rm -v \"\$(pwd)/demo/local:/demo\" k8s-product-image-pipeline-image-processing-service python /demo/generate_demo_images.py"
   exit 1
 fi
 
