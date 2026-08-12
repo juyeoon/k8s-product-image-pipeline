@@ -20,6 +20,7 @@ const imageModal = document.getElementById('image-modal');
 const modalBackdrop = document.getElementById('modal-backdrop');
 const modalClose = document.getElementById('modal-close');
 const modalImage = document.getElementById('modal-image');
+const modalImageWrap = document.getElementById('modal-image-wrap');
 const modalCaption = document.getElementById('modal-caption');
 const modalSizeTabs = document.getElementById('modal-size-tabs');
 const modalMeta = document.getElementById('modal-meta');
@@ -197,6 +198,7 @@ async function showSizeImage(imagesBySize, sizeType, caption) {
   if (!url) return;
 
   renderSizeTabs(imagesBySize, sizeType);
+  modalImageWrap.classList.toggle('zoom-view', sizeType === 'zoom');
   modalCaption.textContent = caption;
   modalMeta.textContent = '불러오는 중...';
 
