@@ -1,3 +1,7 @@
+# 빌드 컨텍스트 경로(web-ui/, ${svc}/Dockerfile 등)는 리포지토리 루트 기준 상대경로라,
+# 이 스크립트를 어디서 실행하든 항상 리포지토리 루트로 이동한 뒤 진행한다.
+Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
+
 $registry = "harbor.jypjt.local/jypjt"
 
 $services = "product-service", "image-processing-service", "web-ui"
@@ -45,6 +49,11 @@ foreach ($svc in $services) {
         Write-Host ""
         Write-Host "[TAG] ${svc} (${OldTag} -> ${NewTag})"
         docker tag "${registry}/${svc}:${OldTag}" $image
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[SKIP PUSH] ${svc}: 이전 단계 실패 (exit code ${LASTEXITCODE})"
+        continue
     }
 
     Write-Host "[PUSH] ${svc}"
