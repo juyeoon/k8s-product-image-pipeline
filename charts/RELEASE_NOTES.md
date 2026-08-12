@@ -1,5 +1,25 @@
 # Release Notes
 
+## v0.1.6 (2026-08-12)
+
+### Changed
+
+- `imageTag`(`values.yaml`)/`appVersion`(`Chart.yaml`)을 `v0.1.5` → `v0.1.6`으로 상향.
+  애플리케이션 이미지 릴리스(web-ui 확대 모달이 실제 크기로 표시되지 않던 문제 수정)를
+  배포하기 위한 변경으로, 차트 자체의 템플릿/구조 변경은 없음.
+
+---
+
+## v0.1.5 (2026-08-11)
+
+### Changed
+
+- `imageTag`(`values.yaml`)/`appVersion`(`Chart.yaml`)을 `v0.1.4` → `v0.1.5`로 상향.
+  애플리케이션 이미지 릴리스(image-processing-service의 zoom 리사이징 업스케일 미적용
+  문제 수정)를 배포하기 위한 변경으로, 차트 자체의 템플릿/구조 변경은 없음.
+
+---
+
 ## v0.1.4 (2026-08-05)
 
 ### Fixed

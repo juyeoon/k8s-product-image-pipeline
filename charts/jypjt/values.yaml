@@ -1,7 +1,7 @@
 global:
   namespace: jypjt
   harborRegistry: harbor.jypjt.local/jypjt
-  imageTag: v0.1.5
+  imageTag: v0.1.6
 
 webUi:
   label: web-ui # deploy name 포함
@@ -83,8 +83,8 @@ rabbitmq:
   label: rabbitmq
   image: rabbitmq:3.13-management-alpine
   replicas: 1
-  amqpPort: 5672            # 실제 메시지 큐 기능
-  managementPort: 15672     # 사람이 보는 웹 대시보드
+  amqpPort: 5672 # 실제 메시지 큐 기능
+  managementPort: 15672 # 사람이 보는 웹 대시보드
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 250m, memory: 256Mi }
@@ -105,4 +105,3 @@ secrets:
     objectStorage: object-storage-credentials
     db: db-credentials
     rabbitMQ: rabbitmq-credentials
-
