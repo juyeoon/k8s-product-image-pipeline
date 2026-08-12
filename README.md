@@ -22,7 +22,7 @@
 
 ## 아키텍처
 
-![전체 쿠버네티스 아키텍처](./docs/full_k8s_architecture.svg)
+![전체 쿠버네티스 아키텍처](./assets/readme/archi_full-k8s-architecture.png)
 
 ### 서비스 흐름
 
@@ -69,7 +69,7 @@ NKS(NHN Kubernetes Service)를 쓰면 클러스터는 몇 분 만에 생깁니�
 
 이 프로젝트의 목적은 동작하는 서비스를 만드는 게 아니라 인프라를 이해하는 것이었으므로, 의도적으로 kubeadm 직접 구축을 택했습니다.
 
-![NHN Cloud 인프라 · 네트워크 구성](./docs/infra_network_architecture.svg)
+![NHN Cloud 인프라 · 네트워크 구성](./assets/readme/archi_nhncloud-network.png)
 
 인스턴스 7대를 직접 올리고, 신뢰 경계마다 보안 그룹과 키페어를 나눴습니다. Floating IP는 Bastion · Control Plane · Harbor 세 곳에만 부여하고 나머지는 사설망 전용으로 뒀습니다.
 
@@ -196,7 +196,7 @@ RabbitMQ에는 실패한 메시지를 자동으로 격리해주는 기능이 있
 | 1s ~ 11s | `initialDelaySeconds: 10` 대기             |
 | 12s      | 첫 Readiness Probe 통과 → `Ready` (MTTR)   |
 
-![Pod Kill MTTR 12초의 내역](./docs/pod_kill_mttr_timeline.svg)
+![Pod Kill MTTR 12초의 내역](./assets/readme/archi_pod-kill-mttr-timeline.png)
 
 #### 이 분해에서 나온 결론
 
@@ -327,6 +327,7 @@ Worker에서 `ImagePullBackOff`가 났고 에러는 `dial tcp <Harbor>:443: i/o 
 ├── demo/
 │   ├── local/                    # 로컬 docker compose 시연 (MinIO 포함)
 │   └── cluster/                  # 실제 NHN Cloud 클러스터 시연 (데이터 초기화 Job)
+├── assets/readme/                # README용 아키텍처 다이어그램 이미지
 └── docs/                         # 로드맵, 회고, 아키텍처 다이어그램 3종
 ```
 
@@ -357,6 +358,6 @@ Worker에서 `ImagePullBackOff`가 났고 에러는 `dial tcp <Harbor>:443: i/o 
 | -------------------------------------------- | ----------------------------------------------------- |
 | [ARCHITECTURE.md](./ARCHITECTURE.md)         | 서비스 간 흐름, 데이터 모델, 테이블 소유권            |
 | [APPLICATION_SPEC.md](./APPLICATION_SPEC.md) | API 스펙, 상태 전이 규칙                              |
-| [RELEASE_NOTES.md](./RELEASE_NOTES.md)       | 이미지 `v0.1.0`~`v0.1.4`, Helm Chart 버전별 변경 내역 |
+| [RELEASE_NOTES.md](./RELEASE_NOTES.md)       | 이미지 `v0.1.0`~`v0.1.6`, Helm Chart 버전별 변경 내역 |
 | [TESTING.md](./TESTING.md)                   | 테스트 절차                                           |
 | [demo/README.md](./demo/README.md)           | 시연용 데이터 생성 및 초기화                          |
