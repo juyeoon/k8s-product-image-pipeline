@@ -284,11 +284,30 @@ main {
   align-items: center;
 }
 
-.modal-content img {
+.modal-image-wrap {
+  width: 100%;
+  max-height: 70vh;
+  overflow: auto;
+  text-align: center;
+}
+
+.modal-image-wrap img {
   max-width: 100%;
   max-height: 70vh;
   border-radius: 8px;
   object-fit: contain;
+}
+
+/* zoom 탭에서는 실제 픽셀 크기 그대로 보여주고, 모달보다 크면 스크롤로 확인한다.
+   (넘치는 콘텐츠를 text-align/justify-content로 가운데 정렬하면 브라우저에 따라
+   스크롤로 시작 부분에 닿지 못하는 경우가 있어 zoom일 때만 왼쪽 정렬로 바꾼다) */
+.modal-image-wrap.zoom-view {
+  text-align: left;
+}
+
+.modal-image-wrap.zoom-view img {
+  max-width: none;
+  max-height: none;
 }
 
 .modal-size-tabs {
