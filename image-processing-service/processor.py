@@ -37,11 +37,15 @@ def inspect_image(file_bytes: bytes):
 def resize_and_upload(product_id: int, image: Image.Image):
     """thumbnail/detail/zoom 3종으로 리사이징 후 Object Storage에 업로드하고 (size_type, url) 목록을 반환한다."""
     rgb_image = image.convert("RGB")
+    width, height = rgb_image.size
     results = []
 
     for size_type, max_dimension in RESIZE_SPECS.items():
-        resized = rgb_image.copy()
-        resized.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
+        # Image.thumbnail()은 축소만 하고 원본보다 작은 목표 크기는 확대하지 않으므로,
+        # 원본이 목표(특히 zoom=1600px)보다 작을 때도 실제로 리사이징되도록 직접 배율을 계산한다.
+        scale = max_dimension / max(width, height)
+        new_size = (round(width * scale), round(height * scale))
+        resized = rgb_image.resize(new_size, Image.LANCZOS)
 
         buffer = io.BytesIO()
         resized.save(buffer, format="JPEG", quality=85)

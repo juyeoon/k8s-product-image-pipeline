@@ -3,6 +3,13 @@
 버전별 변경 이력입니다. 구조/설계에 대한 설명은 [ARCHITECTURE.md](./ARCHITECTURE.md)를 참고하세요
 (그 문서는 항상 최신 상태만 반영하고, 과거 버전과의 차이는 여기에 남깁니다).
 
+## v0.1.5
+
+- `image-processing-service`: zoom(1600px) 리사이징이 원본보다 작은 목표 크기에서
+  업스케일되지 않던 문제 수정. `Image.thumbnail()`은 축소만 하고 확대는 하지 않아, 원본이
+  500~1599px인 경우 zoom 결과물이 원본과 동일한 크기로 저장되고 있었다. 긴 변 기준으로
+  배율을 직접 계산해 `Image.resize()`로 적용하도록 변경 — 원본이 작으면 확대, 크면 축소.
+
 ## v0.1.4
 
 - `image-processing-service`: 공개 이미지 URL 생성에 `OBJECT_STORAGE_ACCOUNT_ID`(선택) 반영.
